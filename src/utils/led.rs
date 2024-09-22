@@ -1,7 +1,34 @@
+use embedded_hal::spi::{Mode, Phase, Polarity};
+use esp_idf_hal::gpio;
+use esp_idf_hal::peripherals::Peripherals;
+use esp_idf_hal::prelude::FromValueType;
+use esp_idf_hal::spi::config::Config;
+use esp_idf_hal::spi::SpiDriverConfig;
 use esp_idf_svc::hal::spi::{SpiDeviceDriver, SpiDriver};
 
-pub fn setup<'d>(spi: &mut SpiDeviceDriver<'d, SpiDriver<'d>>){
-// 1) Initalize Matrix Display
+pub fn initialize_spi<'d>(peripherals:Peripherals) -> SpiDeviceDriver<'d, SpiDriver<'d>>{
+    let sclk = peripherals.pins.gpio8;
+    let cs = peripherals.pins.gpio9;
+    let mosi = peripherals.pins.gpio10;
+
+    // Instantiate c Driver
+    let spi_drv = SpiDriver::new(
+        peripherals.spi2,
+        sclk,
+        mosi,
+        None::<gpio::AnyIOPin>,
+        &SpiDriverConfig::new(),
+    )
+        .unwrap();
+
+    // Configure Parameters for SPI device
+    let config = Config::new().baudrate(2.MHz().into()).data_mode(Mode {
+        polarity: Polarity::IdleLow,
+        phase: Phase::CaptureOnFirstTransition,
+    });
+    return SpiDeviceDriver::new(spi_drv, Some(cs), &config).unwrap()
+}
+pub fn initialize_matrix_display<'d>(spi: &mut SpiDeviceDriver<'d, SpiDriver<'d>>){
 
     // 1.a) Power Up Device
 
