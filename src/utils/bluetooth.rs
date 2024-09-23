@@ -1,31 +1,16 @@
-use embedded_hal::spi::*;
-use esp32_nimble::{BLEAdvertisementData, BLEDevice, NimbleProperties, uuid128};
-use esp32_nimble::enums::{AuthReq, SecurityIOCap};
-use esp_idf_hal::delay::FreeRtos;
-use esp_idf_hal::gpio;
-use esp_idf_hal::peripherals::Peripherals;
-use esp_idf_hal::prelude::*;
-use esp_idf_hal::spi::config::Config;
-use esp_idf_hal::spi::*;
+use std::sync::{Arc};
+use esp32_nimble::{enums::*, uuid128, BLEAdvertisementData, BLEDevice, NimbleProperties, BLECharacteristic};
+use esp32_nimble::utilities::mutex::Mutex;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
-use crate::utils::bluetooth;
 
-mod utils;
-fn main() -> Result<(), Box<dyn std::error::Error>>  {
-    // It is necessary to call this function once. Otherwise some patches to the runtime
-    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
-    esp_idf_svc::sys::link_patches();
-    // Bind the log crate to the ESP Logging facilities
-    esp_idf_svc::log::EspLogger::initialize_default();
-    log::info!("Start LED BOX");
-    // Setup handler for device peripherals
-    let peripherals = Peripherals::take().unwrap();
-    // Create handles for SPI pins
-    let mut spi = utils::led::initialize_spi(peripherals);
-    utils::led::initialize_matrix_display(&mut spi);
+pub struct Bluetooth{
+    pub characteristic:Arc<Mutex<BLECharacteristic>>,
+}
+pub fn init() -> Result<Bluetooth, Box<dyn std::error::Error>> {
 
     let nvs = EspDefaultNvsPartition::take()?;
     let mut nvs_hander = EspNvs::new(nvs, "TEST", true)? ;
+
 
     let ble_device = BLEDevice::take();
 
@@ -59,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>  {
     });
 
     // Create a service with custom UUID
-    let my_service = server.create_service(uuid128!("455aa9f0-2999-43de-81b4-54e0de255927"));
+    let my_service = server.create_service(uuid128!("9b574847-f706-436c-bed7-fc01eb0965c1"));
 
     // Create a characteristic to associate with created service
     let my_service_characteristic = my_service.lock().create_characteristic(
@@ -86,31 +71,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>>  {
         .lock()
         .set_data(
             BLEAdvertisementData::new()
-                .name("LED BOX")
-                .add_service_uuid(uuid128!("455aa9f0-2999-43de-81b4-54e0de255927")),
+                .name("ESP32 Server")
+                .add_service_uuid(uuid128!("9b574847-f706-436c-bed7-fc01eb0965c1")),
         )
         .unwrap();
 
     // Start Advertising
     ble_advertiser.lock().start().unwrap();
-
-    loop {
-        FreeRtos::delay_ms(2000_u32);
-        let mut ch = my_service_characteristic.lock();
-        let matrix = ch.value_mut().value();
-        if matrix.len() == 8 {
-            for addr in 1..9 {
-                spi.write(&[addr, *matrix.get((addr as usize)-1).unwrap()]).unwrap();
-            }
-        }else{
-            spi.write(&[1, 0x00]).unwrap();
-            spi.write(&[2, 0x42]).unwrap();
-            spi.write(&[3, 0x24]).unwrap();
-            spi.write(&[4, 0x18]).unwrap();
-            spi.write(&[5, 0x18]).unwrap();
-            spi.write(&[6, 0x24]).unwrap();
-            spi.write(&[7, 0x42]).unwrap();
-            spi.write(&[8, 0x00]).unwrap();
-        }
-    }
+    return Ok(Bluetooth{
+        characteristic: my_service_characteristic
+    })
 }
