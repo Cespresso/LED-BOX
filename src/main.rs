@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>  {
     // Create a characteristic to associate with created service
     let my_service_characteristic = my_service.lock().create_characteristic(
         uuid128!("681285a6-247f-48c6-80ad-68c3dce18585"),
-        NimbleProperties::WRITE | NimbleProperties::WRITE_ENC
+        NimbleProperties::WRITE | NimbleProperties::WRITE_ENC | NimbleProperties::READ | NimbleProperties::READ_ENC
     );
 
     let mut buf : [u8; 32] = Default::default();
