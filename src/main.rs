@@ -11,6 +11,7 @@ use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
 use crate::utils::bluetooth;
 
 mod utils;
+mod data;
 fn main() -> Result<(), Box<dyn std::error::Error>>  {
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
