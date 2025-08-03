@@ -11,6 +11,7 @@ use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
 use crate::utils::bluetooth;
 
 mod utils;
+mod data_2; // Include the duplicate data module with -2 suffix
 fn main() -> Result<(), Box<dyn std::error::Error>>  {
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
@@ -18,6 +19,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>>  {
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
     log::info!("Start LED BOX");
+    
+    // Initialize duplicate data structures with -2 suffix
+    let mut led_matrix = data_2::LEDMatrix::new();
+    let mut led_matrix_2 = data_2::LEDMatrix2::new();
+    let ble_config = data_2::BLEConfig::default();
+    let ble_config_2 = data_2::BLEConfig2::default();
+    
+    log::info!("Initialized duplicate data structures: {} and {}", ble_config.device_name, ble_config_2.device_name);
+    
     // Setup handler for device peripherals
     let peripherals = Peripherals::take().unwrap();
     // Create handles for SPI pins
@@ -81,13 +91,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>>  {
         log::info!("recv {:?}" ,value.recv_data());
     });
 
+    // Create a second service with custom UUID (duplicate with -2 suffix)
+    let my_service_2 = server.create_service(uuid128!("455aa9f0-2999-43de-81b4-54e0de255928"));
+
+    // Create a second characteristic to associate with created service
+    let my_service_characteristic_2 = my_service_2.lock().create_characteristic(
+        uuid128!("681285a6-247f-48c6-80ad-68c3dce18586"),
+        NimbleProperties::WRITE | NimbleProperties::WRITE_ENC | NimbleProperties::READ | NimbleProperties::read_ENC
+    );
+
+    let mut buf_2 : [u8; 32] = Default::default();
+    let init_value_2 = match nvs_hander.get_raw("KEY_NUM_2",&mut buf_2 )? {
+        None => b"start value 2",
+        Some(value) => value,
+    };
+    log::info!("init_value_2 {:?}" ,init_value_2);
+    // Modify characteristic value for second service
+    my_service_characteristic_2.lock().set_value(init_value_2);
+    my_service_characteristic_2.lock().on_write(move |value|{
+        nvs_hander.set_raw("KEY_NUM_2", value.recv_data()).unwrap();
+        log::info!("current_2 {:?}" ,value.current_data());
+        log::info!("recv_2 {:?}" ,value.recv_data());
+    });
+
     // Configure Advertiser Data
     ble_advertiser
         .lock()
         .set_data(
             BLEAdvertisementData::new()
-                .name("LED BOX")
-                .add_service_uuid(uuid128!("455aa9f0-2999-43de-81b4-54e0de255927")),
+                .name("LED BOX-2")
+                .add_service_uuid(uuid128!("455aa9f0-2999-43de-81b4-54e0de255927"))
+                .add_service_uuid(uuid128!("455aa9f0-2999-43de-81b4-54e0de255928")),
         )
         .unwrap();
 
@@ -96,6 +130,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>>  {
 
     loop {
         FreeRtos::delay_ms(2000_u32);
+        
+        // Handle first characteristic
         let mut ch = my_service_characteristic.lock();
         let matrix = ch.value_mut().value();
         if matrix.len() == 8 {
@@ -112,5 +148,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>>  {
             spi.write(&[7, 0x42]).unwrap();
             spi.write(&[8, 0x00]).unwrap();
         }
+        drop(ch);
+
+        FreeRtos::delay_ms(2000_u32);
+        
+        // Handle second characteristic (duplicate with -2)
+        let mut ch_2 = my_service_characteristic_2.lock();
+        let matrix_2 = ch_2.value_mut().value();
+        if matrix_2.len() == 8 {
+            for addr in 1..9 {
+                spi.write(&[addr, *matrix_2.get((addr as usize)-1).unwrap()]).unwrap();
+            }
+        }else{
+            // Different default pattern for -2 service
+            spi.write(&[1, 0xFF]).unwrap();
+            spi.write(&[2, 0x81]).unwrap();
+            spi.write(&[3, 0x81]).unwrap();
+            spi.write(&[4, 0x81]).unwrap();
+            spi.write(&[5, 0x81]).unwrap();
+            spi.write(&[6, 0x81]).unwrap();
+            spi.write(&[7, 0x81]).unwrap();
+            spi.write(&[8, 0xFF]).unwrap();
+        }
+        drop(ch_2);
     }
 }
