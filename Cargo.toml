@@ -18,7 +18,7 @@ debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 
 [features]
-default = ["std", "embassy", "esp-idf-svc/native"]
+default = ["std", "esp-idf-svc/native"]
 
 pio = ["esp-idf-svc/pio"]
 std = ["alloc", "esp-idf-svc/binstart", "esp-idf-svc/std"]
@@ -29,10 +29,10 @@ embassy = ["esp-idf-svc/embassy-sync", "esp-idf-svc/critical-section", "esp-idf-
 
 [dependencies]
 log = { version = "0.4", default-features = false }
-esp-idf-svc = { version = "0.49", default-features = false }
-esp-idf-hal = { version = "0.44.1", default-features = false }
-embedded-hal = "1.0.0-alpha.10"
-esp32-nimble = "0.8.0"
+esp-idf-svc = { version = "0.51", default-features = false }
+esp-idf-hal = { version = "0.45", default-features = false }
+embedded-hal = "1.0.0"
+esp32-nimble = "0.11"
 
 [build-dependencies]
-embuild = "0.32.0"
+embuild = { version = "0.33", features = ["espidf"] }
