@@ -1,14 +1,8 @@
-use embedded_hal::spi::*;
 use esp32_nimble::{BLEAdvertisementData, BLEDevice, NimbleProperties, uuid128};
 use esp32_nimble::enums::{AuthReq, SecurityIOCap};
 use esp_idf_hal::delay::FreeRtos;
-use esp_idf_hal::gpio;
 use esp_idf_hal::peripherals::Peripherals;
-use esp_idf_hal::prelude::*;
-use esp_idf_hal::spi::config::Config;
-use esp_idf_hal::spi::*;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
-use crate::utils::bluetooth;
 
 mod utils;
 fn main() -> Result<(), Box<dyn std::error::Error>>  {
@@ -97,10 +91,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>>  {
     loop {
         FreeRtos::delay_ms(2000_u32);
         let mut ch = my_service_characteristic.lock();
-        let matrix = ch.value_mut().value();
+        let matrix = ch.value_mut().as_slice();
         if matrix.len() == 8 {
             for addr in 1..9 {
-                spi.write(&[addr, *matrix.get((addr as usize)-1).unwrap()]).unwrap();
+                spi.write(&[addr, matrix[(addr as usize)-1]]).unwrap();
             }
         }else{
             spi.write(&[1, 0x00]).unwrap();
