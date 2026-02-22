@@ -33,7 +33,7 @@ Phase 0（基盤）→ Phase 1（ペット）→ Phase 3（ツール）→ Phase
   - モード切替用のCharacteristicを追加（または既存Characteristicのプロトコルを拡張）
   - 例: 先頭1バイト=コマンド種別（モード切替/データ送信等）
 
-- [ ] **0-4: main.rsのリファクタリング**
+- [x] **0-4: main.rsのリファクタリング**
   - 現在main.rsにインラインで書かれているBLE初期化を `bluetooth.rs` に統合
   - モジュール分離を整理
 

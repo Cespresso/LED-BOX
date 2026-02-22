@@ -6,34 +6,57 @@ use esp_idf_hal::spi::config::Config;
 use esp_idf_hal::spi::{SpiDeviceDriver, SpiDriver, SpiDriverConfig, SPI2};
 use esp_idf_hal::sys::EspError;
 
-pub fn initialize_spi<'d>(
-    spi: impl Peripheral<P = SPI2> + 'd,
-    sclk: AnyOutputPin,
-    cs: AnyOutputPin,
-    mosi: AnyOutputPin,
-) -> Result<SpiDeviceDriver<'d, SpiDriver<'d>>, EspError> {
-    let spi_drv = SpiDriver::new(
-        spi,
-        sclk,
-        mosi,
-        None::<AnyIOPin>,
-        &SpiDriverConfig::new(),
-    )?;
-
-    let config = Config::new().baudrate(2.MHz().into()).data_mode(Mode {
-        polarity: Polarity::IdleLow,
-        phase: Phase::CaptureOnFirstTransition,
-    });
-    SpiDeviceDriver::new(spi_drv, Some(cs), &config)
+/// 8x8 LED matrix display backed by MAX7219 over SPI.
+pub struct Display<'d> {
+    spi: SpiDeviceDriver<'d, SpiDriver<'d>>,
 }
 
-pub fn initialize_matrix_display<'d>(spi: &mut SpiDeviceDriver<'d, SpiDriver<'d>>) {
-    // Power Up Device
-    spi.write(&[0x0C, 0x01]).unwrap();
-    // Set up Decode Mode (No Decode)
-    spi.write(&[0x09, 0x00]).unwrap();
-    // Configure Scan Limit (All digits)
-    spi.write(&[0x0B, 0x07]).unwrap();
-    // Configure Intensity (Maximum)
-    spi.write(&[0x0A, 0x0F]).unwrap();
+impl<'d> Display<'d> {
+    /// Initialize SPI bus, configure MAX7219, and return a ready-to-use display.
+    pub fn new(
+        spi: impl Peripheral<P = SPI2> + 'd,
+        sclk: AnyOutputPin,
+        cs: AnyOutputPin,
+        mosi: AnyOutputPin,
+    ) -> Result<Self, EspError> {
+        let spi_drv = SpiDriver::new(
+            spi,
+            sclk,
+            mosi,
+            None::<AnyIOPin>,
+            &SpiDriverConfig::new(),
+        )?;
+
+        let config = Config::new().baudrate(2.MHz().into()).data_mode(Mode {
+            polarity: Polarity::IdleLow,
+            phase: Phase::CaptureOnFirstTransition,
+        });
+        let mut spi = SpiDeviceDriver::new(spi_drv, Some(cs), &config)?;
+
+        // Power Up Device
+        spi.write(&[0x0C, 0x01]).unwrap();
+        // Set up Decode Mode (No Decode)
+        spi.write(&[0x09, 0x00]).unwrap();
+        // Configure Scan Limit (All digits)
+        spi.write(&[0x0B, 0x07]).unwrap();
+        // Configure Intensity (Maximum)
+        spi.write(&[0x0A, 0x0F]).unwrap();
+
+        Ok(Self { spi })
+    }
+
+    /// Write 8 bytes of row data to the LED matrix.
+    /// Falls back to a default smiley face if data is shorter than 8 bytes.
+    pub fn show(&mut self, data: &[u8]) {
+        if data.len() >= 8 {
+            for addr in 1..=8u8 {
+                self.spi.write(&[addr, data[(addr - 1) as usize]]).unwrap();
+            }
+        } else {
+            let default = [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00];
+            for (i, &byte) in default.iter().enumerate() {
+                self.spi.write(&[(i + 1) as u8, byte]).unwrap();
+            }
+        }
+    }
 }
