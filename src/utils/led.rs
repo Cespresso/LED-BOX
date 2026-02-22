@@ -1,93 +1,39 @@
 use embedded_hal::spi::{Mode, Phase, Polarity};
-use esp_idf_hal::gpio;
-use esp_idf_hal::peripherals::Peripherals;
+use esp_idf_hal::gpio::{AnyIOPin, AnyOutputPin};
+use esp_idf_hal::peripheral::Peripheral;
 use esp_idf_hal::prelude::FromValueType;
 use esp_idf_hal::spi::config::Config;
-use esp_idf_hal::spi::SpiDriverConfig;
-use esp_idf_svc::hal::spi::{SpiDeviceDriver, SpiDriver};
+use esp_idf_hal::spi::{SpiDeviceDriver, SpiDriver, SpiDriverConfig, SPI2};
+use esp_idf_hal::sys::EspError;
 
-pub fn initialize_spi<'d>(peripherals:Peripherals) -> SpiDeviceDriver<'d, SpiDriver<'d>>{
-    let sclk = peripherals.pins.gpio8;
-    let cs = peripherals.pins.gpio9;
-    let mosi = peripherals.pins.gpio10;
-
-    // Instantiate c Driver
+pub fn initialize_spi<'d>(
+    spi: impl Peripheral<P = SPI2> + 'd,
+    sclk: AnyOutputPin,
+    cs: AnyOutputPin,
+    mosi: AnyOutputPin,
+) -> Result<SpiDeviceDriver<'d, SpiDriver<'d>>, EspError> {
     let spi_drv = SpiDriver::new(
-        peripherals.spi2,
+        spi,
         sclk,
         mosi,
-        None::<gpio::AnyIOPin>,
+        None::<AnyIOPin>,
         &SpiDriverConfig::new(),
-    )
-        .unwrap();
+    )?;
 
-    // Configure Parameters for SPI device
     let config = Config::new().baudrate(2.MHz().into()).data_mode(Mode {
         polarity: Polarity::IdleLow,
         phase: Phase::CaptureOnFirstTransition,
     });
-    return SpiDeviceDriver::new(spi_drv, Some(cs), &config).unwrap()
+    SpiDeviceDriver::new(spi_drv, Some(cs), &config)
 }
-pub fn initialize_matrix_display<'d>(spi: &mut SpiDeviceDriver<'d, SpiDriver<'d>>){
 
-    // 1.a) Power Up Device
-
-    // - Prepare Data to be Sent
-    // 8-bit Data/Command Corresponding to Matrix Power Up
-    let data: u8 = 0x01;
-    // 4-bit Address of Shutdown Mode Command
-    let addr: u8 = 0x0C;
-    // Package into array to pass to SPI write method
-    // Write method will grab array and send all data in it
-    let send_array: [u8; 2] = [addr, data];
-
-    // - Send Data
-    // Shift in 16 bits by passing send_array (bits will be shifted MSB first)
-    // Note that write method handles the CS pin state
-    spi.write(&send_array).unwrap();
-
-    // 1.b) Set up Decode Mode
-
-    // - Prepare Information to be Sent
-    // 8-bit Data/Command Corresponding to No Decode Mode
-    let data: u8 = 0x00;
-    // 4-bit Address of Decode Mode Command
-    let addr: u8 = 0x09;
-    // Package into array to pass to SPI write method
-    // Write method will grab array and send all data in it
-    let send_array: [u8; 2] = [addr, data];
-
-    // - Send Data
-    // Shift in 16 bits by passing send_array (bits will be shifted MSB first)
-    spi.write(&send_array).unwrap();
-
-    // 1.c) Configure Scan Limit
-
-    // - Prepare Information to be Sent
-    // 8-bit Data/Command Corresponding to Scan Limit Displaying all digits
-    let data: u8 = 0x07;
-    // 4-bit Address of Scan Limit Command
-    let addr: u8 = 0x0B;
-    // Package into array to pass to SPI write method
-    // Write method will grab array and send all data in it
-    let send_array: [u8; 2] = [addr, data];
-
-    // - Send Data
-    // Shift in 16 bits by passing send_array (bits will be shifted MSB first)
-    spi.write(&send_array).unwrap();
-
-    // // 1.c) Configure Intensity
-    //
-    // // - Prepare Information to be Sent
-    // // 8-bit Data/Command Corresponding to (15/32 Duty Cycle) Medium Intensity
-    let data: u8 = 0x0f;
-    // 4-bit Address of Intensity Control Command
-    let addr: u8 = 0x0A;
-    // Package into array to pass to SPI write method
-    // Write method will grab array and send all data in it
-    let send_array: [u8; 2] = [addr, data];
-
-    // - Send Data
-    // Shift in 16 bits by passing send_array (bits will be shifted MSB first)
-    spi.write(&send_array).unwrap()
+pub fn initialize_matrix_display<'d>(spi: &mut SpiDeviceDriver<'d, SpiDriver<'d>>) {
+    // Power Up Device
+    spi.write(&[0x0C, 0x01]).unwrap();
+    // Set up Decode Mode (No Decode)
+    spi.write(&[0x09, 0x00]).unwrap();
+    // Configure Scan Limit (All digits)
+    spi.write(&[0x0B, 0x07]).unwrap();
+    // Configure Intensity (Maximum)
+    spi.write(&[0x0A, 0x0F]).unwrap();
 }

@@ -33,7 +33,7 @@ CRATE_CC_NO_DEFAULTS=1 cargo run --example nvs
   - GPIO8: SCLK
   - GPIO9: CS
   - GPIO10: MOSI
-- ボタン: 2つ（赤・白）※GPIO未割り当て
+- ボタン: 2つ（赤=GPIO3, 白=GPIO4）Pull-up、押下でLOW
 
 ### モジュール構成
 - `src/main.rs` - エントリポイント。BLEサーバー初期化、モード管理、メインループ

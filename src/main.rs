@@ -1,110 +1,69 @@
-use esp32_nimble::{BLEAdvertisementData, BLEDevice, NimbleProperties, uuid128};
-use esp32_nimble::enums::{AuthReq, SecurityIOCap};
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::peripherals::Peripherals;
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
+use esp_idf_hal::spi::{SpiDeviceDriver, SpiDriver};
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 
+mod mode;
 mod utils;
-fn main() -> Result<(), Box<dyn std::error::Error>>  {
-    // It is necessary to call this function once. Otherwise some patches to the runtime
-    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     esp_idf_svc::sys::link_patches();
-    // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
-    log::info!("Start LED BOX");
-    // Setup handler for device peripherals
+    log::info!("=== LED BOX Starting ===");
+
     let peripherals = Peripherals::take().unwrap();
-    // Create handles for SPI pins
-    let mut spi = utils::led::initialize_spi(peripherals);
+    FreeRtos::delay_ms(200);
+
+    // Initialize LED matrix (MAX7219 via SPI)
+    let mut spi = utils::led::initialize_spi(
+        peripherals.spi2,
+        peripherals.pins.gpio8.into(),
+        peripherals.pins.gpio9.into(),
+        peripherals.pins.gpio10.into(),
+    )?;
     utils::led::initialize_matrix_display(&mut spi);
+    log::info!("LED matrix initialized");
 
-    let nvs = EspDefaultNvsPartition::take()?;
-    let mut nvs_hander = EspNvs::new(nvs, "TEST", true)? ;
+    // Initialize BLE
+    let nvs_partition = EspDefaultNvsPartition::take()?;
+    let ble = utils::bluetooth::BluetoothManager::init(nvs_partition)?;
+    log::info!("BLE initialized");
 
-    let ble_device = BLEDevice::take();
+    // Initialize buttons (red=GPIO3, white=GPIO4)
+    let mut buttons = utils::button::Buttons::new(
+        peripherals.pins.gpio3.into(),
+        peripherals.pins.gpio4.into(),
+    )?;
+    log::info!("Buttons initialized (red=GPIO3, white=GPIO4)");
 
-    // Obtain handle for peripheral advertiser
-    let ble_advertiser = ble_device.get_advertising();
-
-    // Configure Device Security
-    ble_device
-        .security()
-        .set_auth(AuthReq::all())
-        .set_passkey(123456)
-        .set_io_cap(SecurityIOCap::DisplayOnly)
-        .resolve_rpa();
-
-    // Obtain handle for server
-    let server = ble_device.get_server();
-
-    // Define server connect behaviour
-    server.on_connect(|server, clntdesc| {
-        // Print connected client data
-        println!("{:?}", clntdesc);
-        // Update connection parameters
-        server
-            .update_conn_params(clntdesc.conn_handle(), 24, 48, 0, 60)
-            .unwrap();
-    });
-
-    // Define server disconnect behaviour
-    server.on_disconnect(|_desc, _reason| {
-        println!("Disconnected, back to advertising");
-    });
-
-    // Create a service with custom UUID
-    let my_service = server.create_service(uuid128!("455aa9f0-2999-43de-81b4-54e0de255927"));
-
-    // Create a characteristic to associate with created service
-    let my_service_characteristic = my_service.lock().create_characteristic(
-        uuid128!("681285a6-247f-48c6-80ad-68c3dce18585"),
-        NimbleProperties::WRITE | NimbleProperties::WRITE_ENC | NimbleProperties::READ | NimbleProperties::READ_ENC
-    );
-
-    let mut buf : [u8; 32] = Default::default();
-    let init_value = match nvs_hander.get_raw("KEY_NUM",&mut buf )? {
-        None => b"start value",
-        Some(value) => value,
-    };
-    log::info!("init_value {:?}" ,init_value);
-    // Modify characteristic value
-    my_service_characteristic.lock().set_value(init_value);
-    my_service_characteristic.lock().on_write(move |value|{
-        nvs_hander.set_raw("KEY_NUM", value.recv_data()).unwrap();
-        log::info!("current {:?}" ,value.current_data());
-        log::info!("recv {:?}" ,value.recv_data());
-    });
-
-    // Configure Advertiser Data
-    ble_advertiser
-        .lock()
-        .set_data(
-            BLEAdvertisementData::new()
-                .name("LED BOX")
-                .add_service_uuid(uuid128!("455aa9f0-2999-43de-81b4-54e0de255927")),
-        )
-        .unwrap();
-
-    // Start Advertising
-    ble_advertiser.lock().start().unwrap();
-
+    // Main loop
     loop {
-        FreeRtos::delay_ms(2000_u32);
-        let mut ch = my_service_characteristic.lock();
-        let matrix = ch.value_mut().as_slice();
-        if matrix.len() == 8 {
-            for addr in 1..9 {
-                spi.write(&[addr, matrix[(addr as usize)-1]]).unwrap();
-            }
-        }else{
-            spi.write(&[1, 0x00]).unwrap();
-            spi.write(&[2, 0x42]).unwrap();
-            spi.write(&[3, 0x24]).unwrap();
-            spi.write(&[4, 0x18]).unwrap();
-            spi.write(&[5, 0x18]).unwrap();
-            spi.write(&[6, 0x24]).unwrap();
-            spi.write(&[7, 0x42]).unwrap();
-            spi.write(&[8, 0x00]).unwrap();
+        // Poll buttons
+        if let Some(press) = buttons.red.poll() {
+            log::info!("Red button: {:?}", press);
+        }
+        if let Some(press) = buttons.white.poll() {
+            log::info!("White button: {:?}", press);
+        }
+
+        // Update LED display from BLE data
+        let data = ble.get_display_data();
+        display_matrix(&mut spi, &data);
+
+        FreeRtos::delay_ms(50);
+    }
+}
+
+fn display_matrix<'a>(spi: &mut SpiDeviceDriver<'a, SpiDriver<'a>>, data: &[u8]) {
+    if data.len() >= 8 {
+        for addr in 1..=8u8 {
+            spi.write(&[addr, data[(addr - 1) as usize]]).unwrap();
+        }
+    } else {
+        // Default smiley face
+        let default = [0x00, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x00];
+        for (i, &byte) in default.iter().enumerate() {
+            spi.write(&[(i + 1) as u8, byte]).unwrap();
         }
     }
 }

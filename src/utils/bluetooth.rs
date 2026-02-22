@@ -1,84 +1,87 @@
-use std::sync::{Arc};
-use esp32_nimble::{enums::*, uuid128, BLEAdvertisementData, BLEDevice, NimbleProperties, BLECharacteristic};
+use std::sync::Arc;
+
+use esp32_nimble::enums::{AuthReq, SecurityIOCap};
 use esp32_nimble::utilities::mutex::Mutex;
+use esp32_nimble::{uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, NimbleProperties};
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
 
-pub struct Bluetooth{
-    pub characteristic:Arc<Mutex<BLECharacteristic>>,
+pub struct BluetoothManager {
+    pub characteristic: Arc<Mutex<BLECharacteristic>>,
 }
-pub fn init() -> Result<Bluetooth, Box<dyn std::error::Error>> {
 
-    let nvs = EspDefaultNvsPartition::take()?;
-    let mut nvs_hander = EspNvs::new(nvs, "TEST", true)? ;
+impl BluetoothManager {
+    pub fn init(
+        nvs_partition: EspDefaultNvsPartition,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut nvs = EspNvs::new(nvs_partition, "TEST", true)?;
 
+        let ble_device = BLEDevice::take();
+        let ble_advertiser = ble_device.get_advertising();
 
-    let ble_device = BLEDevice::take();
+        // Configure Device Security
+        ble_device
+            .security()
+            .set_auth(AuthReq::all())
+            .set_passkey(123456)
+            .set_io_cap(SecurityIOCap::DisplayOnly)
+            .resolve_rpa();
 
-    // Obtain handle for peripheral advertiser
-    let ble_advertiser = ble_device.get_advertising();
+        let server = ble_device.get_server();
 
-    // Configure Device Security
-    ble_device
-        .security()
-        .set_auth(AuthReq::all())
-        .set_passkey(123456)
-        .set_io_cap(SecurityIOCap::DisplayOnly)
-        .resolve_rpa();
+        server.on_connect(|server, clntdesc| {
+            log::info!("BLE client connected: {:?}", clntdesc);
+            server
+                .update_conn_params(clntdesc.conn_handle(), 24, 48, 0, 60)
+                .unwrap();
+        });
 
-    // Obtain handle for server
-    let server = ble_device.get_server();
+        server.on_disconnect(|_desc, _reason| {
+            log::info!("BLE client disconnected");
+        });
 
-    // Define server connect behaviour
-    server.on_connect(|server, clntdesc| {
-        // Print connected client data
-        println!("{:?}", clntdesc);
-        // Update connection parameters
-        server
-            .update_conn_params(clntdesc.conn_handle(), 24, 48, 0, 60)
+        // Create service and characteristic
+        let service =
+            server.create_service(uuid128!("455aa9f0-2999-43de-81b4-54e0de255927"));
+        let characteristic = service.lock().create_characteristic(
+            uuid128!("681285a6-247f-48c6-80ad-68c3dce18585"),
+            NimbleProperties::READ
+                | NimbleProperties::READ_ENC
+                | NimbleProperties::WRITE
+                | NimbleProperties::WRITE_ENC,
+        );
+
+        // Load initial value from NVS
+        let mut buf: [u8; 32] = [0; 32];
+        let init_value = match nvs.get_raw("KEY_NUM", &mut buf)? {
+            Some(value) => value,
+            None => b"start value",
+        };
+        log::info!("BLE init value: {:?}", init_value);
+        characteristic.lock().set_value(init_value);
+
+        // Save received data to NVS on write
+        characteristic.lock().on_write(move |value| {
+            nvs.set_raw("KEY_NUM", value.recv_data()).unwrap();
+            log::info!("BLE recv: {:?}", value.recv_data());
+        });
+
+        // Configure and start advertising
+        ble_advertiser
+            .lock()
+            .set_data(
+                BLEAdvertisementData::new()
+                    .name("LED BOX")
+                    .add_service_uuid(uuid128!("455aa9f0-2999-43de-81b4-54e0de255927")),
+            )
             .unwrap();
-    });
+        ble_advertiser.lock().start().unwrap();
+        log::info!("BLE advertising started as 'LED BOX'");
 
-    // Define server disconnect behaviour
-    server.on_disconnect(|_desc, _reason| {
-        println!("Disconnected, back to advertising");
-    });
+        Ok(Self { characteristic })
+    }
 
-    // Create a service with custom UUID
-    let my_service = server.create_service(uuid128!("9b574847-f706-436c-bed7-fc01eb0965c1"));
-
-    // Create a characteristic to associate with created service
-    let my_service_characteristic = my_service.lock().create_characteristic(
-        uuid128!("681285a6-247f-48c6-80ad-68c3dce18585"),
-        NimbleProperties::WRITE | NimbleProperties::WRITE_ENC | NimbleProperties::READ | NimbleProperties::READ_ENC
-    );
-
-    let mut buf : [u8; 32] = Default::default();
-    let init_value = match nvs_hander.get_raw("KEY_NUM",&mut buf )? {
-        None => b"start value",
-        Some(value) => value,
-    };
-    log::info!("init_value {:?}" ,init_value);
-    // Modify characteristic value
-    my_service_characteristic.lock().set_value(init_value);
-    my_service_characteristic.lock().on_write(move |value|{
-        nvs_hander.set_raw("KEY_NUM", value.recv_data()).unwrap();
-        log::info!("current {:?}" ,value.current_data());
-        log::info!("recv {:?}" ,value.recv_data());
-    });
-
-    // Configure Advertiser Data
-    ble_advertiser
-        .lock()
-        .set_data(
-            BLEAdvertisementData::new()
-                .name("ESP32 Server")
-                .add_service_uuid(uuid128!("9b574847-f706-436c-bed7-fc01eb0965c1")),
-        )
-        .unwrap();
-
-    // Start Advertising
-    ble_advertiser.lock().start().unwrap();
-    return Ok(Bluetooth{
-        characteristic: my_service_characteristic
-    })
+    /// Get current display data from BLE characteristic
+    pub fn get_display_data(&self) -> Vec<u8> {
+        self.characteristic.lock().value_mut().as_slice().to_vec()
+    }
 }
