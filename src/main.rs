@@ -3,6 +3,8 @@ use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::spi::{SpiDeviceDriver, SpiDriver};
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
 
+use crate::utils::bluetooth::BleCommand;
+
 use crate::mode::Mode;
 use crate::utils::button::PressType;
 
@@ -27,9 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     utils::led::initialize_matrix_display(&mut spi);
     log::info!("LED matrix initialized");
 
-    // Initialize NVS (clone partition for sharing between subsystems)
+    // Initialize NVS
     let nvs_partition = EspDefaultNvsPartition::take()?;
-    let nvs_for_ble = nvs_partition.clone();
 
     // Initialize Mode Manager
     let nvs_mode = EspNvs::new(nvs_partition, "TEST", true)?;
@@ -37,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Mode system initialized: {}", mode_manager.current().name());
 
     // Initialize BLE
-    let ble = utils::bluetooth::BluetoothManager::init(nvs_for_ble)?;
+    let ble = utils::bluetooth::BluetoothManager::init()?;
     log::info!("BLE initialized");
 
     // Initialize buttons (red=GPIO3, white=GPIO4)
@@ -55,6 +56,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Poll buttons
         let red_press = buttons.red.poll();
         let white_press = buttons.white.poll();
+
+        // Process BLE commands
+        if let Some(cmd) = ble.take_command() {
+            match cmd {
+                BleCommand::SwitchMode(m) => {
+                    let new_mode = Mode::from_u8(m);
+                    if let Err(e) = mode_manager.switch_to(new_mode) {
+                        log::error!("BLE switch_to failed: {:?}", e);
+                    }
+                    display_matrix(&mut spi, &mode_manager.current().icon());
+                }
+                BleCommand::SetDisplayData(_) => {
+                    // display_data is stored in BleState; Tools mode reads it via get_display_data()
+                }
+            }
+        }
 
         // White long-press: cycle mode (universal, consumed before mode dispatch)
         let white_press = if let Some(PressType::Long) = white_press {
@@ -90,9 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Mode::Tools => {
-                // Preserve existing BLE → LED display behavior
+                // Display BLE-received data on LED matrix
                 let data = ble.get_display_data();
-                display_matrix(&mut spi, &data);
+                display_matrix(&mut spi, &data[..]);
                 if let Some(press) = red_press {
                     log::info!("[Tools] Red: {:?}", press);
                 }

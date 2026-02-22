@@ -2,18 +2,34 @@ use std::sync::Arc;
 
 use esp32_nimble::enums::{AuthReq, SecurityIOCap};
 use esp32_nimble::utilities::mutex::Mutex;
-use esp32_nimble::{uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, NimbleProperties};
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
+use esp32_nimble::{uuid128, BLEAdvertisementData, BLEDevice, NimbleProperties};
+
+/// BLE protocol commands parsed from incoming data.
+///
+/// | Byte 0 | Payload              | Action              |
+/// |--------|----------------------|---------------------|
+/// | 0x01   | Byte 1: mode (0-5)   | Switch mode         |
+/// | 0x02   | Bytes 1-8: 8 bytes   | Set LED display data|
+pub enum BleCommand {
+    SwitchMode(u8),
+    SetDisplayData([u8; 8]),
+}
+
+struct BleState {
+    pending_command: Option<BleCommand>,
+    display_data: [u8; 8],
+}
 
 pub struct BluetoothManager {
-    pub characteristic: Arc<Mutex<BLECharacteristic>>,
+    state: Arc<Mutex<BleState>>,
 }
 
 impl BluetoothManager {
-    pub fn init(
-        nvs_partition: EspDefaultNvsPartition,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut nvs = EspNvs::new(nvs_partition, "TEST", true)?;
+    pub fn init() -> Result<Self, Box<dyn std::error::Error>> {
+        let state = Arc::new(Mutex::new(BleState {
+            pending_command: None,
+            display_data: [0u8; 8],
+        }));
 
         let ble_device = BLEDevice::take();
         let ble_advertiser = ble_device.get_advertising();
@@ -50,19 +66,48 @@ impl BluetoothManager {
                 | NimbleProperties::WRITE_ENC,
         );
 
-        // Load initial value from NVS
-        let mut buf: [u8; 32] = [0; 32];
-        let init_value = match nvs.get_raw("KEY_NUM", &mut buf)? {
-            Some(value) => value,
-            None => b"start value",
-        };
-        log::info!("BLE init value: {:?}", init_value);
-        characteristic.lock().set_value(init_value);
-
-        // Save received data to NVS on write
+        // Parse BLE protocol on write
+        let state_clone = state.clone();
         characteristic.lock().on_write(move |value| {
-            nvs.set_raw("KEY_NUM", value.recv_data()).unwrap();
-            log::info!("BLE recv: {:?}", value.recv_data());
+            let data = value.recv_data();
+            log::info!("BLE recv: {:?}", data);
+
+            if data.is_empty() {
+                log::warn!("BLE: empty payload, ignoring");
+                return;
+            }
+
+            let mut state = state_clone.lock();
+            match data[0] {
+                0x01 => {
+                    // SwitchMode: expects 1 byte payload
+                    if data.len() >= 2 {
+                        let mode = data[1];
+                        log::info!("BLE cmd: SwitchMode({})", mode);
+                        state.pending_command = Some(BleCommand::SwitchMode(mode));
+                    } else {
+                        log::warn!("BLE: SwitchMode missing mode byte");
+                    }
+                }
+                0x02 => {
+                    // SetDisplayData: expects 8 bytes payload
+                    if data.len() >= 9 {
+                        let mut buf = [0u8; 8];
+                        buf.copy_from_slice(&data[1..9]);
+                        log::info!("BLE cmd: SetDisplayData({:?})", buf);
+                        state.display_data = buf;
+                        state.pending_command = Some(BleCommand::SetDisplayData(buf));
+                    } else {
+                        log::warn!(
+                            "BLE: SetDisplayData needs 9 bytes, got {}",
+                            data.len()
+                        );
+                    }
+                }
+                cmd => {
+                    log::warn!("BLE: unknown command 0x{:02X}", cmd);
+                }
+            }
         });
 
         // Configure and start advertising
@@ -77,11 +122,16 @@ impl BluetoothManager {
         ble_advertiser.lock().start().unwrap();
         log::info!("BLE advertising started as 'LED BOX'");
 
-        Ok(Self { characteristic })
+        Ok(Self { state })
     }
 
-    /// Get current display data from BLE characteristic
-    pub fn get_display_data(&self) -> Vec<u8> {
-        self.characteristic.lock().value_mut().as_slice().to_vec()
+    /// Take the pending command (if any), clearing it from the state.
+    pub fn take_command(&self) -> Option<BleCommand> {
+        self.state.lock().pending_command.take()
+    }
+
+    /// Get current display data (8 bytes for 8x8 LED matrix).
+    pub fn get_display_data(&self) -> [u8; 8] {
+        self.state.lock().display_data
     }
 }

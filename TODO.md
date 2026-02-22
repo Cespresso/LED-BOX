@@ -29,7 +29,7 @@ Phase 0（基盤）→ Phase 1（ペット）→ Phase 3（ツール）→ Phase
   - `enum Mode { Pet, Pomodoro, SmartHome, Notification, Monitor, Tools }` のようなモード管理
   - 現在のモードに応じてメインループの振る舞いを切り替える
 
-- [ ] **0-3: BLEプロトコルの再設計**
+- [x] **0-3: BLEプロトコルの再設計**
   - モード切替用のCharacteristicを追加（または既存Characteristicのプロトコルを拡張）
   - 例: 先頭1バイト=コマンド種別（モード切替/データ送信等）
 
