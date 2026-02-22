@@ -8,16 +8,17 @@ use crate::utils::bluetooth::{BleCommand, BluetoothManager};
 use crate::utils::button::{Buttons, PressType};
 use crate::utils::led::Display;
 
+mod assets;
 mod mode;
 mod utils;
 
 fn pet_idle_clip() -> AnimationClip {
     AnimationClip::looping(
         vec![
-            [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00], // eyes open
-            [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00], // eyes open (hold)
-            [0x00, 0x00, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00], // eyes closed (blink)
-            [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00], // eyes open
+            assets::FACE_SMILE, // eyes open
+            assets::FACE_SMILE, // eyes open (hold)
+            assets::FACE_BLINK, // eyes closed (blink)
+            assets::FACE_SMILE, // eyes open
         ],
         500,
     )

@@ -1,5 +1,7 @@
-use esp_idf_svc::nvs::{EspNvs, NvsDefault};
 use esp_idf_hal::sys::EspError;
+use esp_idf_svc::nvs::{EspNvs, NvsDefault};
+
+use crate::assets;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -42,15 +44,14 @@ impl Mode {
         Mode::from_u8((self as u8 + 1) % MODE_COUNT)
     }
 
-    /// Stub 8x8 icon for each mode (placeholder until Phase 0-6 assets)
     pub fn icon(&self) -> [u8; 8] {
         match self {
-            Mode::Pet =>          [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00],
-            Mode::Pomodoro =>     [0x3C, 0x42, 0x42, 0x3C, 0x18, 0x18, 0x3C, 0x00],
-            Mode::Tools =>        [0x18, 0x18, 0x7E, 0x7E, 0x18, 0x18, 0x18, 0x00],
-            Mode::Notification => [0x18, 0x3C, 0x3C, 0x3C, 0x7E, 0x00, 0x18, 0x00],
-            Mode::SmartHome =>    [0x18, 0x3C, 0x7E, 0x7E, 0x42, 0x42, 0xFF, 0x00],
-            Mode::Monitor =>      [0x7E, 0x42, 0x42, 0x42, 0x7E, 0x18, 0x7E, 0x00],
+            Mode::Pet => assets::ICON_PET,
+            Mode::Pomodoro => assets::ICON_POMODORO,
+            Mode::Tools => assets::ICON_TOOLS,
+            Mode::Notification => assets::ICON_NOTIFICATION,
+            Mode::SmartHome => assets::ICON_SMART_HOME,
+            Mode::Monitor => assets::ICON_MONITOR,
         }
     }
 }
