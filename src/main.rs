@@ -3,12 +3,32 @@ use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
 
 use crate::mode::Mode;
+use crate::utils::animation::{AnimationClip, AnimationPlayer};
 use crate::utils::bluetooth::{BleCommand, BluetoothManager};
 use crate::utils::button::{Buttons, PressType};
 use crate::utils::led::Display;
 
 mod mode;
 mod utils;
+
+fn pet_idle_clip() -> AnimationClip {
+    AnimationClip::looping(
+        vec![
+            [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00], // eyes open
+            [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00], // eyes open (hold)
+            [0x00, 0x00, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00], // eyes closed (blink)
+            [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00], // eyes open
+        ],
+        500,
+    )
+}
+
+fn create_animator(mode: Mode) -> Option<AnimationPlayer> {
+    match mode {
+        Mode::Pet => Some(AnimationPlayer::new(pet_idle_clip())),
+        _ => None,
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     esp_idf_svc::sys::link_patches();
@@ -44,8 +64,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     log::info!("Buttons initialized (red=GPIO3, white=GPIO4)");
 
-    // Show initial mode icon
-    display.show(&mode_manager.current().icon());
+    // Initialize animator and show initial display
+    let mut animator = create_animator(mode_manager.current());
+    if let Some(ref anim) = animator {
+        display.show(anim.current_frame());
+    } else {
+        display.show(&mode_manager.current().icon());
+    }
 
     // Main loop
     loop {
@@ -60,7 +85,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Err(e) = mode_manager.switch_to(new_mode) {
                         log::error!("BLE switch_to failed: {:?}", e);
                     }
-                    display.show(&mode_manager.current().icon());
+                    animator = create_animator(mode_manager.current());
+                    if let Some(ref anim) = animator {
+                        display.show(anim.current_frame());
+                    } else {
+                        display.show(&mode_manager.current().icon());
+                    }
                 }
                 BleCommand::SetDisplayData(_) => {
                     // display_data is stored in BleState; Tools mode reads it via get_display_data()
@@ -74,7 +104,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = mode_manager.switch_to(next) {
                 log::error!("Failed to switch mode: {:?}", e);
             }
-            display.show(&mode_manager.current().icon());
+            animator = create_animator(mode_manager.current());
+            if let Some(ref anim) = animator {
+                display.show(anim.current_frame());
+            } else {
+                display.show(&mode_manager.current().icon());
+            }
             FreeRtos::delay_ms(500);
             None // consume the press
         } else {
@@ -82,13 +117,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // Mode-specific display
-        match mode_manager.current() {
-            Mode::Tools => {
-                let data = ble.get_display_data();
-                display.show(&data);
+        if let Some(ref mut anim) = animator {
+            if let Some(frame) = anim.tick() {
+                display.show(frame);
             }
-            mode => {
-                display.show(&mode.icon());
+        } else {
+            match mode_manager.current() {
+                Mode::Tools => {
+                    let data = ble.get_display_data();
+                    display.show(&data);
+                }
+                mode => {
+                    display.show(&mode.icon());
+                }
             }
         }
 
