@@ -104,6 +104,7 @@ private fun ConnectionSection(
                 color = when (state) {
                     ConnectionState.Ready -> Color(0xFF4CAF50)
                     ConnectionState.Disconnected -> Color.Gray
+                    ConnectionState.Bonding -> Color(0xFFFF5722)
                     else -> Color(0xFFFFA000)
                 }
             )

@@ -13,6 +13,10 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,7 +27,7 @@ import java.util.Locale
 import java.util.UUID
 
 enum class ConnectionState {
-    Disconnected, Scanning, Connecting, Connected, Ready
+    Disconnected, Scanning, Connecting, Bonding, Connected, Ready
 }
 
 @Suppress("DEPRECATION")
@@ -67,6 +71,57 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
     private var gatt: BluetoothGatt? = null
     private var modeCharacteristic: BluetoothGattCharacteristic? = null
     private var displayCharacteristic: BluetoothGattCharacteristic? = null
+
+    // BroadcastReceiver for bonding state changes
+    private val bondReceiver = object : BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+            val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                ?: return
+            val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
+            val prevState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.BOND_NONE)
+            log("Bond state: ${bondStateName(prevState)} -> ${bondStateName(state)}")
+
+            // Only proceed for the device we're connecting to
+            if (gatt?.device?.address != device.address) return
+
+            when (state) {
+                BluetoothDevice.BOND_BONDED -> {
+                    log("Bonded! Discovering services...")
+                    _connectionState.value = ConnectionState.Connected
+                    gatt?.discoverServices()
+                }
+                BluetoothDevice.BOND_NONE -> {
+                    if (prevState == BluetoothDevice.BOND_BONDING) {
+                        log("Bonding failed!")
+                        disconnect()
+                    }
+                }
+            }
+        }
+    }
+
+    private var receiverRegistered = false
+
+    init {
+        registerBondReceiver()
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private fun registerBondReceiver() {
+        if (receiverRegistered) return
+        val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+        getApplication<Application>().registerReceiver(bondReceiver, filter)
+        receiverRegistered = true
+    }
+
+    private fun bondStateName(state: Int): String = when (state) {
+        BluetoothDevice.BOND_NONE -> "NONE"
+        BluetoothDevice.BOND_BONDING -> "BONDING"
+        BluetoothDevice.BOND_BONDED -> "BONDED"
+        else -> "UNKNOWN($state)"
+    }
 
     private fun log(message: String) {
         val timestamp = timeFormat.format(Date())
@@ -189,9 +244,20 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     this@LedBoxViewModel.gatt = gatt
-                    _connectionState.value = ConnectionState.Connected
-                    log("Connected, discovering services...")
-                    gatt.discoverServices()
+                    val bondState = gatt.device.bondState
+                    log("Connected (bondState=${bondStateName(bondState)})")
+
+                    if (bondState == BluetoothDevice.BOND_BONDED) {
+                        // Already bonded, go straight to service discovery
+                        _connectionState.value = ConnectionState.Connected
+                        log("Already bonded, discovering services...")
+                        gatt.discoverServices()
+                    } else {
+                        // Need to bond first - passkey dialog will appear
+                        _connectionState.value = ConnectionState.Bonding
+                        log("Initiating bonding (enter passkey: 123456)...")
+                        gatt.device.createBond()
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     _connectionState.value = ConnectionState.Disconnected
@@ -220,13 +286,13 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
             displayCharacteristic = service.getCharacteristic(DISPLAY_UUID)
 
             if (modeCharacteristic != null) {
-                log("Mode characteristic found (props=${modeCharacteristic!!.properties})")
+                log("Mode char found (props=${modeCharacteristic!!.properties})")
             } else {
                 log("Mode characteristic NOT found!")
             }
 
             if (displayCharacteristic != null) {
-                log("Display characteristic found (props=${displayCharacteristic!!.properties})")
+                log("Display char found (props=${displayCharacteristic!!.properties})")
             } else {
                 log("Display characteristic NOT found!")
             }
@@ -240,12 +306,14 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
                     gatt.writeDescriptor(descriptor)
                     log("Enabling mode notifications...")
                 } else {
-                    log("CCCD descriptor not found on mode characteristic")
+                    log("CCCD descriptor not found")
+                    _connectionState.value = ConnectionState.Ready
+                    log("Ready")
                 }
+            } ?: run {
+                _connectionState.value = ConnectionState.Ready
+                log("Ready (no mode characteristic)")
             }
-
-            _connectionState.value = ConnectionState.Ready
-            log("Ready")
         }
 
         override fun onDescriptorWrite(
@@ -255,11 +323,13 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
         ) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 log("Notification enabled")
-                // Read initial mode after notifications are set up
-                readMode()
             } else {
                 log("Descriptor write failed (status=$status)")
             }
+            _connectionState.value = ConnectionState.Ready
+            log("Ready")
+            // Read initial mode after setup is complete
+            readMode()
         }
 
         override fun onCharacteristicRead(
@@ -315,6 +385,10 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     override fun onCleared() {
+        if (receiverRegistered) {
+            getApplication<Application>().unregisterReceiver(bondReceiver)
+            receiverRegistered = false
+        }
         @SuppressLint("MissingPermission")
         fun cleanup() {
             gatt?.disconnect()
