@@ -10,15 +10,20 @@ pub enum PlaybackMode {
 }
 
 /// Immutable definition of an animation sequence.
-#[derive(Debug, Clone)]
+/// Uses `&'static` slice to avoid heap allocation — all frame data lives in flash.
+#[derive(Debug, Clone, Copy)]
 pub struct AnimationClip {
-    frames: Vec<[u8; 8]>,
+    frames: &'static [[u8; 8]],
     frame_duration_ms: u32,
     playback_mode: PlaybackMode,
 }
 
 impl AnimationClip {
-    pub fn new(frames: Vec<[u8; 8]>, frame_duration_ms: u32, playback_mode: PlaybackMode) -> Self {
+    pub const fn new(
+        frames: &'static [[u8; 8]],
+        frame_duration_ms: u32,
+        playback_mode: PlaybackMode,
+    ) -> Self {
         Self {
             frames,
             frame_duration_ms,
@@ -26,21 +31,29 @@ impl AnimationClip {
         }
     }
 
-    pub fn looping(frames: Vec<[u8; 8]>, frame_duration_ms: u32) -> Self {
+    pub const fn looping(frames: &'static [[u8; 8]], frame_duration_ms: u32) -> Self {
         Self::new(frames, frame_duration_ms, PlaybackMode::Loop)
     }
 
-    pub fn one_shot(frames: Vec<[u8; 8]>, frame_duration_ms: u32) -> Self {
+    pub const fn one_shot(frames: &'static [[u8; 8]], frame_duration_ms: u32) -> Self {
         Self::new(frames, frame_duration_ms, PlaybackMode::OneShot)
     }
 }
 
+/// Saved state for restoring the previous animation after an interrupt.
+struct InterruptState {
+    saved_clip: AnimationClip,
+    saved_frame: usize,
+}
+
 /// Stateful player that tracks the current frame and elapsed time.
+/// Supports interrupt animations that auto-restore the previous clip on completion.
 pub struct AnimationPlayer {
     clip: AnimationClip,
     current_frame: usize,
     last_tick: Instant,
     finished: bool,
+    interrupt: Option<InterruptState>,
 }
 
 impl AnimationPlayer {
@@ -51,6 +64,7 @@ impl AnimationPlayer {
             current_frame: 0,
             last_tick: Instant::now(),
             finished: false,
+            interrupt: None,
         }
     }
 
@@ -73,6 +87,12 @@ impl AnimationPlayer {
             match self.clip.playback_mode {
                 PlaybackMode::Loop => self.current_frame = 0,
                 PlaybackMode::OneShot => {
+                    // Restore previous animation if this was an interrupt
+                    if let Some(saved) = self.interrupt.take() {
+                        self.clip = saved.saved_clip;
+                        self.current_frame = saved.saved_frame;
+                        return Some(&self.clip.frames[self.current_frame]);
+                    }
                     self.finished = true;
                     return None;
                 }
@@ -89,16 +109,38 @@ impl AnimationPlayer {
         &self.clip.frames[self.current_frame]
     }
 
-    /// Whether a OneShot animation has completed.
+    /// Whether a OneShot animation has completed (without an interrupt to restore).
     pub fn is_finished(&self) -> bool {
         self.finished
     }
 
-    /// Reset the animation to the beginning.
+    /// Play a temporary animation. When it finishes (OneShot), the previous
+    /// animation automatically resumes from where it left off.
+    /// If already interrupted, the original (non-interrupt) animation is preserved.
+    pub fn play_interrupt(&mut self, clip: AnimationClip) {
+        if self.interrupt.is_none() {
+            self.interrupt = Some(InterruptState {
+                saved_clip: self.clip,
+                saved_frame: self.current_frame,
+            });
+        }
+        self.clip = clip;
+        self.current_frame = 0;
+        self.last_tick = Instant::now();
+        self.finished = false;
+    }
+
+    /// Whether an interrupt animation is currently playing.
+    pub fn is_interrupted(&self) -> bool {
+        self.interrupt.is_some()
+    }
+
+    /// Reset the animation to the beginning, clearing any interrupt state.
     pub fn reset(&mut self) {
         self.current_frame = 0;
         self.last_tick = Instant::now();
         self.finished = false;
+        self.interrupt = None;
     }
 
     /// Replace the current clip and reset playback.

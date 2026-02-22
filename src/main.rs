@@ -3,33 +3,14 @@ use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
 
 use crate::mode::Mode;
-use crate::utils::animation::{AnimationClip, AnimationPlayer};
 use crate::utils::bluetooth::{BleCommand, BluetoothManager};
 use crate::utils::button::{Buttons, PressType};
 use crate::utils::led::Display;
 
 mod assets;
+mod handlers;
 mod mode;
 mod utils;
-
-fn pet_idle_clip() -> AnimationClip {
-    AnimationClip::looping(
-        vec![
-            assets::FACE_SMILE, // eyes open
-            assets::FACE_SMILE, // eyes open (hold)
-            assets::FACE_BLINK, // eyes closed (blink)
-            assets::FACE_SMILE, // eyes open
-        ],
-        500,
-    )
-}
-
-fn create_animator(mode: Mode) -> Option<AnimationPlayer> {
-    match mode {
-        Mode::Pet => Some(AnimationPlayer::new(pet_idle_clip())),
-        _ => None,
-    }
-}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     esp_idf_svc::sys::link_patches();
@@ -65,13 +46,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     log::info!("Buttons initialized (red=GPIO3, white=GPIO4)");
 
-    // Initialize animator and show initial display
-    let mut animator = create_animator(mode_manager.current());
-    if let Some(ref anim) = animator {
-        display.show(anim.current_frame());
-    } else {
-        display.show(&mode_manager.current().icon());
-    }
+    // Create handler for current mode
+    let mut handler = handlers::create_handler(mode_manager.current(), ble.get_display_data());
+    display.show(&handler.on_enter());
 
     // Main loop
     loop {
@@ -86,15 +63,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Err(e) = mode_manager.switch_to(new_mode) {
                         log::error!("BLE switch_to failed: {:?}", e);
                     }
-                    animator = create_animator(mode_manager.current());
-                    if let Some(ref anim) = animator {
-                        display.show(anim.current_frame());
-                    } else {
-                        display.show(&mode_manager.current().icon());
-                    }
+                    handler =
+                        handlers::create_handler(mode_manager.current(), ble.get_display_data());
+                    display.show(&handler.on_enter());
                 }
-                BleCommand::SetDisplayData(_) => {
-                    // display_data is stored in BleState; Tools mode reads it via get_display_data()
+                BleCommand::SetDisplayData(data) => {
+                    handler.on_ble_data(data);
                 }
             }
         }
@@ -105,42 +79,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = mode_manager.switch_to(next) {
                 log::error!("Failed to switch mode: {:?}", e);
             }
-            animator = create_animator(mode_manager.current());
-            if let Some(ref anim) = animator {
-                display.show(anim.current_frame());
-            } else {
-                display.show(&mode_manager.current().icon());
-            }
+            handler = handlers::create_handler(mode_manager.current(), ble.get_display_data());
+            display.show(&handler.on_enter());
             FreeRtos::delay_ms(500);
             None // consume the press
         } else {
             white_press
         };
 
-        // Mode-specific display
-        if let Some(ref mut anim) = animator {
-            if let Some(frame) = anim.tick() {
-                display.show(frame);
-            }
-        } else {
-            match mode_manager.current() {
-                Mode::Tools => {
-                    let data = ble.get_display_data();
-                    display.show(&data);
-                }
-                mode => {
-                    display.show(&mode.icon());
-                }
-            }
+        // Mode-specific button handling
+        if let Some(press) = red_press {
+            log::info!("[{}] Red: {:?}", mode_manager.current().name(), press);
+            handler.on_red_button(press);
+        }
+        if let Some(press) = white_press {
+            log::info!("[{}] White: {:?}", mode_manager.current().name(), press);
+            handler.on_white_button(press);
         }
 
-        // Common button event logging
-        let mode_name = mode_manager.current().name();
-        if let Some(press) = red_press {
-            log::info!("[{}] Red: {:?}", mode_name, press);
-        }
-        if let Some(PressType::Short) = white_press {
-            log::info!("[{}] White short press", mode_name);
+        // Display update
+        if let Some(frame) = handler.tick() {
+            display.show(&frame);
         }
 
         FreeRtos::delay_ms(50);
