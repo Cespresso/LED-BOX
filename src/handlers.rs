@@ -1,5 +1,6 @@
 pub mod default;
 pub mod pet;
+pub mod pomodoro;
 pub mod tools;
 
 use crate::mode::Mode;
@@ -28,6 +29,7 @@ pub trait ModeHandler {
 pub fn create_handler(mode: Mode, ble_display_data: [u8; 8]) -> Box<dyn ModeHandler> {
     match mode {
         Mode::Pet => Box::new(pet::PetHandler::new()),
+        Mode::Pomodoro => Box::new(pomodoro::PomodoroHandler::new()),
         Mode::Tools => Box::new(tools::ToolsHandler::new(ble_display_data)),
         _ => Box::new(default::DefaultHandler::new(mode)),
     }

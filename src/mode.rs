@@ -70,8 +70,8 @@ impl ModeManager {
                 mode
             }
             None => {
-                log::info!("No saved mode, defaulting to Pet");
-                Mode::Pet
+                log::info!("No saved mode, defaulting to Pomodoro");
+                Mode::Pomodoro
             }
         };
         Ok(Self { current_mode, nvs })
