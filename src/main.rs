@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Mode system initialized: {}", mode_manager.current().name());
 
     // Initialize BLE
-    let ble = BluetoothManager::init()?;
+    let ble = BluetoothManager::init(mode_manager.current() as u8)?;
     log::info!("BLE initialized");
 
     // Initialize buttons (red=GPIO3, white=GPIO4)
@@ -63,6 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Err(e) = mode_manager.switch_to(new_mode) {
                         log::error!("BLE switch_to failed: {:?}", e);
                     }
+                    ble.notify_mode_change(mode_manager.current() as u8);
                     handler =
                         handlers::create_handler(mode_manager.current(), ble.get_display_data());
                     display.show(&handler.on_enter());
@@ -79,6 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = mode_manager.switch_to(next) {
                 log::error!("Failed to switch mode: {:?}", e);
             }
+            ble.notify_mode_change(mode_manager.current() as u8);
             handler = handlers::create_handler(mode_manager.current(), ble.get_display_data());
             display.show(&handler.on_enter());
             FreeRtos::delay_ms(500);
