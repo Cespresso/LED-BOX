@@ -47,15 +47,21 @@ impl<'d> Display<'d> {
 
     /// Write 8 bytes of row data to the LED matrix.
     /// Falls back to a default smiley face if data is shorter than 8 bytes.
+    /// Data is rotated 180° to compensate for the upside-down mounted MAX7219.
     pub fn show(&mut self, data: &[u8]) {
         if data.len() >= 8 {
             for addr in 1..=8u8 {
-                self.spi.write(&[addr, data[(addr - 1) as usize]]).unwrap();
+                // Rotate 180°: reverse row order and reverse bits in each row
+                self.spi
+                    .write(&[addr, data[(8 - addr) as usize].reverse_bits()])
+                    .unwrap();
             }
         } else {
-            let default = [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00];
-            for (i, &byte) in default.iter().enumerate() {
-                self.spi.write(&[(i + 1) as u8, byte]).unwrap();
+            let default: [u8; 8] = [0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0x00];
+            for addr in 1..=8u8 {
+                self.spi
+                    .write(&[addr, default[(8 - addr) as usize].reverse_bits()])
+                    .unwrap();
             }
         }
     }
