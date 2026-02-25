@@ -8,6 +8,7 @@ use esp32_nimble::{uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, 
 pub enum BleCommand {
     SwitchMode(u8),
     SetDisplayData([u8; 8]),
+    SetToolsSubMode(u8),
 }
 
 struct BleState {
@@ -110,6 +111,33 @@ impl BluetoothManager {
             } else {
                 log::warn!("BLE: display data needs 8 bytes, got {}", data.len());
             }
+        });
+
+        // --- Tools Sub-Mode Characteristic (READ | WRITE) ---
+        let tools_submode_characteristic = service.lock().create_characteristic(
+            uuid128!("681285a6-247f-48c6-80ad-68c3dce18587"),
+            NimbleProperties::READ
+                | NimbleProperties::READ_ENC
+                | NimbleProperties::WRITE
+                | NimbleProperties::WRITE_ENC,
+        );
+        tools_submode_characteristic
+            .lock()
+            .set_value(&[0]); // default: Dice (0)
+
+        let state_clone = state.clone();
+        tools_submode_characteristic.lock().on_write(move |value| {
+            let data = value.recv_data();
+            log::info!("BLE tools sub-mode write: {:?}", data);
+
+            if data.is_empty() {
+                log::warn!("BLE: tools sub-mode write empty, ignoring");
+                return;
+            }
+
+            let submode = data[0];
+            log::info!("BLE cmd: SetToolsSubMode({})", submode);
+            state_clone.lock().pending_command = Some(BleCommand::SetToolsSubMode(submode));
         });
 
         // Configure and start advertising

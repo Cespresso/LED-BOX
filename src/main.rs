@@ -71,6 +71,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 BleCommand::SetDisplayData(data) => {
                     handler.on_ble_data(data);
                 }
+                BleCommand::SetToolsSubMode(submode) => {
+                    handler.on_ble_submode(submode);
+                }
             }
         }
 

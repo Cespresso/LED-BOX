@@ -21,6 +21,9 @@ pub trait ModeHandler {
     /// Called when BLE display data is received.
     fn on_ble_data(&mut self, _data: [u8; 8]) {}
 
+    /// Called when BLE tools sub-mode is changed.
+    fn on_ble_submode(&mut self, _submode: u8) {}
+
     /// Called every tick (~50ms). Returns Some(frame) if display should update.
     fn tick(&mut self) -> Option<[u8; 8]>;
 }

@@ -39,6 +39,7 @@ fun LedBoxScreen(viewModel: LedBoxViewModel) {
     val connectionState by viewModel.connectionState.collectAsState()
     val currentMode by viewModel.currentMode.collectAsState()
     val displayData by viewModel.displayData.collectAsState()
+    val currentToolsSubmode by viewModel.currentToolsSubmode.collectAsState()
     val logs by viewModel.logs.collectAsState()
 
     Scaffold(
@@ -71,6 +72,14 @@ fun LedBoxScreen(viewModel: LedBoxViewModel) {
                     onModeSelect = viewModel::writeMode,
                     onReadMode = viewModel::readMode,
                 )
+
+                if (currentMode == 2) {
+                    ToolsSubmodeSection(
+                        currentSubmode = currentToolsSubmode,
+                        onSubmodeSelect = viewModel::writeToolsSubmode,
+                        onReadSubmode = viewModel::readToolsSubmode,
+                    )
+                }
 
                 DisplaySection(
                     data = displayData,
@@ -245,6 +254,65 @@ private fun DisplaySection(
                 Button(onClick = onSend) { Text("Send") }
                 OutlinedButton(onClick = onClear) { Text("Clear") }
                 OutlinedButton(onClick = onRead) { Text("Read") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolsSubmodeSection(
+    currentSubmode: Int?,
+    onSubmodeSelect: (Int) -> Unit,
+    onReadSubmode: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Tools Sub-Mode", style = MaterialTheme.typography.titleMedium)
+                OutlinedButton(onClick = onReadSubmode) {
+                    Text("Read", fontSize = 12.sp)
+                }
+            }
+
+            if (currentSubmode != null) {
+                Text(
+                    text = "Current: %d (%s)".format(
+                        currentSubmode,
+                        LedBoxViewModel.TOOLS_SUBMODE_NAMES[currentSubmode] ?: "unknown"
+                    ),
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                LedBoxViewModel.TOOLS_SUBMODE_NAMES.forEach { (id, name) ->
+                    val isActive = currentSubmode == id
+                    if (isActive) {
+                        Button(
+                            onClick = { onSubmodeSelect(id) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(name, fontSize = 12.sp)
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { onSubmodeSelect(id) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(name, fontSize = 12.sp)
+                        }
+                    }
+                }
             }
         }
     }

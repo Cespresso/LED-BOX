@@ -39,6 +39,7 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
         val SERVICE_UUID: UUID = UUID.fromString("455aa9f0-2999-43de-81b4-54e0de255927")
         val MODE_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18586")
         val DISPLAY_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18585")
+        val TOOLS_SUBMODE_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18587")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         val MODE_NAMES = mapOf(
@@ -48,6 +49,11 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
             3 to "Notification",
             4 to "SmartHome",
             5 to "Monitor",
+        )
+
+        val TOOLS_SUBMODE_NAMES = mapOf(
+            0 to "Dice",
+            1 to "Custom Display",
         )
     }
 
@@ -62,6 +68,9 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
     private val _displayData = MutableStateFlow(IntArray(8))
     val displayData = _displayData.asStateFlow()
 
+    private val _currentToolsSubmode = MutableStateFlow<Int?>(null)
+    val currentToolsSubmode = _currentToolsSubmode.asStateFlow()
+
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs = _logs.asStateFlow()
 
@@ -71,6 +80,7 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
     private var gatt: BluetoothGatt? = null
     private var modeCharacteristic: BluetoothGattCharacteristic? = null
     private var displayCharacteristic: BluetoothGattCharacteristic? = null
+    private var toolsSubmodeCharacteristic: BluetoothGattCharacteristic? = null
 
     // BroadcastReceiver for bonding state changes
     private val bondReceiver = object : BroadcastReceiver() {
@@ -163,8 +173,10 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
         gatt = null
         modeCharacteristic = null
         displayCharacteristic = null
+        toolsSubmodeCharacteristic = null
         _connectionState.value = ConnectionState.Disconnected
         _currentMode.value = null
+        _currentToolsSubmode.value = null
         log("Disconnected")
     }
 
@@ -202,6 +214,24 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
         val char = displayCharacteristic ?: return
         gatt?.readCharacteristic(char)
         log("Reading display data...")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun writeToolsSubmode(submode: Int) {
+        val char = toolsSubmodeCharacteristic ?: run {
+            log("Tools sub-mode characteristic not available")
+            return
+        }
+        char.value = byteArrayOf(submode.toByte())
+        val success = gatt?.writeCharacteristic(char) ?: false
+        log("Write tools sub-mode=$submode (${TOOLS_SUBMODE_NAMES[submode] ?: "unknown"}): ${if (success) "sent" else "failed"}")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun readToolsSubmode() {
+        val char = toolsSubmodeCharacteristic ?: return
+        gatt?.readCharacteristic(char)
+        log("Reading tools sub-mode...")
     }
 
     fun togglePixel(row: Int, col: Int) {
@@ -284,6 +314,7 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
 
             modeCharacteristic = service.getCharacteristic(MODE_UUID)
             displayCharacteristic = service.getCharacteristic(DISPLAY_UUID)
+            toolsSubmodeCharacteristic = service.getCharacteristic(TOOLS_SUBMODE_UUID)
 
             if (modeCharacteristic != null) {
                 log("Mode char found (props=${modeCharacteristic!!.properties})")
@@ -295,6 +326,12 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
                 log("Display char found (props=${displayCharacteristic!!.properties})")
             } else {
                 log("Display characteristic NOT found!")
+            }
+
+            if (toolsSubmodeCharacteristic != null) {
+                log("Tools sub-mode char found (props=${toolsSubmodeCharacteristic!!.properties})")
+            } else {
+                log("Tools sub-mode characteristic NOT found")
             }
 
             // Enable notifications on mode characteristic
@@ -353,6 +390,11 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
                     _displayData.value = data
                     log("Display = ${data.joinToString(" ") { "%02X".format(it) }}")
                 }
+                TOOLS_SUBMODE_UUID -> {
+                    val submode = value[0].toInt() and 0xFF
+                    _currentToolsSubmode.value = submode
+                    log("Tools sub-mode = $submode (${TOOLS_SUBMODE_NAMES[submode] ?: "unknown"})")
+                }
             }
         }
 
@@ -363,8 +405,9 @@ class LedBoxViewModel(application: Application) : AndroidViewModel(application) 
         ) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 log("Write OK (${characteristic.uuid.toString().takeLast(4)})")
-                if (characteristic.uuid == MODE_UUID) {
-                    readMode()
+                when (characteristic.uuid) {
+                    MODE_UUID -> readMode()
+                    TOOLS_SUBMODE_UUID -> readToolsSubmode()
                 }
             } else {
                 log("Write FAILED (status=$status)")
