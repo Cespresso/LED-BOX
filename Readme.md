@@ -158,10 +158,22 @@ Claude Codeの応答完了や入力待ちをLED BOXで通知する。
 
 - LED BOXがNotificationモードになっていること（Androidアプリからモード切替: `0x03`）
 - Python 3 + bleak がインストール済み
+- macOSとLED BOXがBLEペアリング済みであること（下記参照）
 
 ```bash
 pip install bleak
 ```
+
+### macOSとのBLEペアリング
+
+初回のみ必要。Androidとのペアリングは切れないので安心してください（ESP32は複数デバイスとのボンディング情報を保持できます）。
+
+1. macOSのシステム設定 > Bluetooth で「LED BOX」を探してペアリング
+2. パスキー `123456` を入力
+
+または `python3 tools/ble-notify.py waiting` を初回実行するとmacOSがパスキー入力ダイアログを表示するので、そこで `123456` を入力してもOK。
+
+**注意:** BLEの同時接続は1台までです。Androidアプリを接続したままだとPC側から接続できません。PC通知を使うときはAndroidアプリの接続を切ってください。
 
 ### 1. 動作確認
 
