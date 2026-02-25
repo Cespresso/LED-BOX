@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/led-box/tools/ble-notify.py waiting"
+            "command": "/path/to/led-box/tools/.venv/bin/python3 /path/to/led-box/tools/ble-notify.py waiting"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/led-box/tools/ble-notify.py complete"
+            "command": "/path/to/led-box/tools/.venv/bin/python3 /path/to/led-box/tools/ble-notify.py complete"
           }
         ]
       }

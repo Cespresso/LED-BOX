@@ -157,10 +157,13 @@ Claude Codeの応答完了や入力待ちをLED BOXで通知する。
 ### 前提
 
 - LED BOXがNotificationモードになっていること（Androidアプリからモード切替: `0x03`）
-- Python 3 + bleak がインストール済み
+- Python 3 + bleak がインストール済み（下記参照）
 - macOSとLED BOXがBLEペアリング済みであること（下記参照）
 
 ```bash
+cd tools
+python3 -m venv .venv
+source .venv/bin/activate
 pip install bleak
 ```
 
@@ -179,10 +182,10 @@ pip install bleak
 
 ```bash
 # 入力待ち通知（ベルアイコン点滅）
-python3 tools/ble-notify.py waiting
+tools/.venv/bin/python3 tools/ble-notify.py waiting
 
 # 応答完了通知（チェックマーク表示）
-python3 tools/ble-notify.py complete
+tools/.venv/bin/python3 tools/ble-notify.py complete
 ```
 
 ### 2. Claude Code Hooks 設定
@@ -198,7 +201,7 @@ python3 tools/ble-notify.py complete
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /absolute/path/to/led-box/tools/ble-notify.py waiting"
+            "command": "/absolute/path/to/led-box/tools/.venv/bin/python3 /absolute/path/to/led-box/tools/ble-notify.py waiting"
           }
         ]
       }
@@ -209,7 +212,7 @@ python3 tools/ble-notify.py complete
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /absolute/path/to/led-box/tools/ble-notify.py complete"
+            "command": "/absolute/path/to/led-box/tools/.venv/bin/python3 /absolute/path/to/led-box/tools/ble-notify.py complete"
           }
         ]
       }
