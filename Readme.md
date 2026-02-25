@@ -149,3 +149,68 @@ async def main():
         smile = bytes([0x3C, 0x42, 0xA5, 0x81, 0xA5, 0x99, 0x42, 0x3C])
         await client.write_gatt_char(DISPLAY_UUID, smile)
 ```
+
+## Claude Code 通知モード セットアップ
+
+Claude Codeの応答完了や入力待ちをLED BOXで通知する。
+
+### 前提
+
+- LED BOXがNotificationモードになっていること（Androidアプリからモード切替: `0x03`）
+- Python 3 + bleak がインストール済み
+
+```bash
+pip install bleak
+```
+
+### 1. 動作確認
+
+```bash
+# 入力待ち通知（ベルアイコン点滅）
+python3 tools/ble-notify.py waiting
+
+# 応答完了通知（チェックマーク表示）
+python3 tools/ble-notify.py complete
+```
+
+### 2. Claude Code Hooks 設定
+
+`~/.claude/settings.json` に以下を追加:
+
+```json
+{
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /absolute/path/to/led-box/tools/ble-notify.py waiting"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /absolute/path/to/led-box/tools/ble-notify.py complete"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`/absolute/path/to/led-box/` を実際のパスに置き換えること。
+
+### 通知種別
+
+| イベント | LED表示 | クリア方法 |
+|---------|---------|-----------|
+| `Notification` (入力待ち/権限確認) | ベルアイコン点滅 | 赤ボタン短押し |
+| `Stop` (応答完了) | チェックマーク → 自動消灯 | 自動 or 赤ボタン |

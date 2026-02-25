@@ -55,3 +55,11 @@ pub const PATTERN_CROSS: [u8; 8] = [0x00, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x
 pub const WEATHER_SUNNY: [u8; 8] = [0x00, 0x42, 0x24, 0x5A, 0x5A, 0x24, 0x42, 0x00];
 pub const WEATHER_CLOUDY: [u8; 8] = [0x00, 0x00, 0x1C, 0x22, 0x7F, 0x41, 0x3E, 0x00];
 pub const WEATHER_RAINY: [u8; 8] = [0x1C, 0x22, 0x7F, 0x3E, 0x00, 0x24, 0x48, 0x24];
+
+// --- Notification animations ---
+
+/// Waiting for input: bell icon blinking (ON → OFF loop)
+pub const NOTIF_WAITING_FRAMES: &[[u8; 8]] = &[ICON_NOTIFICATION, PATTERN_ALL_OFF];
+
+/// Task complete: checkmark displayed then fades out
+pub const NOTIF_COMPLETE_FRAMES: &[[u8; 8]] = &[PATTERN_CHECK, PATTERN_CHECK, PATTERN_ALL_OFF];
