@@ -111,20 +111,65 @@ Claude CodeのHooks機能を利用し、応答完了や入力待ちをLED BOXに
   - `Stop`イベント → `ble-notify.py complete`
   - 設定例: `tools/claude-hooks-example.json`
 
-## Phase 5: 通知インジケーター（Wi-Fi連携）
+## Phase 5: 天気表示（Wi-Fi連携）
 
-- [ ] **5-1: Wi-Fi接続の実装**
-  - `esp-idf-svc` のWi-Fi機能を使ったSTA接続
-  - SSIDはBLE経由またはNVSに保存
+ESP32-C3の単一ラジオでWi-FiとBLEをTDM（時分割多重）で同時利用し、天気情報をLEDに表示する。
 
-- [ ] **5-2: HTTPクライアント実装**
-  - 天気API等への定期的なHTTPリクエスト
+### 技術的前提
+- Wi-Fi STA + NimBLE BLEの同時利用は`CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y`で対応可能
+- メモリ: Wi-Fi(~80-100KB) + NimBLE(~60-80KB) + システム(~50-60KB) ≒ 220-290KB使用、残り110-180KBでアプリ動作可能
+- **TLSは使わない**: HTTPS時のTLSハンドシェイクで追加40-50KBのヒープが必要なため、HTTP対応APIを使用
+- 天気API: **Open-Meteo**（API key不要、HTTP対応、レスポンス約520バイト、WMO天気コード）
 
-- [ ] **5-3: 天気表示**
-  - 天気情報を取得し、晴れ/雨/曇りのアイコンをアニメーション表示
+### クリティカルパス
+- `peripherals.modem`の所有権: `EspWifi::new()`と`esp32-nimble`が競合する可能性 → 要プロトタイピング
+- `BlockingWifi`の接続ブロック（数秒）→ ローディングアニメーションで対応
 
-- [ ] **5-4: 汎用通知受信**
-  - BLE経由で通知種別を受信し、対応するアイコンを表示（メール、SNS等）
+### タスク
+
+- [ ] **5-1a: Wi-Fi + BLE共存基盤**
+  - sdkconfig追加: `CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y`、Wi-Fiバッファ削減、`CONFIG_COMPILER_OPTIMIZATION_SIZE=y`
+  - `BlockingWifi` + `EspWifi::new()`でSTA接続
+  - `esp32-nimble`との`peripherals.modem`共存確認（最優先で検証）
+  - ランタイムヒープモニタリング（`heap_caps_get_free_size`）で余裕を確認
+
+- [ ] **5-1b: Wi-Fiクレデンシャル管理**
+  - NVS namespace `"wifi_cfg"` にSSID/パスワードを保存・読出し
+  - 初期は環境変数 or ソースコードハードコードで開発、後にBLE経由設定を検討
+
+- [ ] **5-2: HTTPクライアントで天気取得**
+  - `esp_idf_svc::http::client::EspHttpConnection`でHTTP GET
+  - エンドポイント: `http://api.open-meteo.com/v1/forecast?latitude=35.68&longitude=139.77&current=temperature_2m,weather_code`
+  - 1KBバッファでレスポンス受信
+  - JSONパースは手動パターンマッチ（`serde_json`はバイナリサイズ増加のため避ける）
+  - WMO天気コード → アイコン種別へのマッピング
+
+- [ ] **5-3a: 天気アイコンのドット絵アセット作成**
+  - `assets.rs`に追加: `ICON_SUN`(太陽), `ICON_CLOUD`(雲), `ICON_RAIN`(雨), `ICON_SNOW`(雪), `ICON_THUNDER`(雷), `ICON_FOG`(霧)
+  - 雨・雪はアニメーション用の複数フレーム
+  - `ICON_WIFI_ERROR`(接続エラー), `ICON_LOADING`(回転アニメーション)
+
+- [ ] **5-3b: WeatherHandler実装**
+  - `src/handlers/weather.rs` 新規作成
+  - `Mode` enumに`Weather`を追加
+  - 状態遷移: Connecting → Fetching → Displaying / Error
+  - 10〜15分間隔で自動更新
+  - ボタン操作: 赤短押し=即時更新、赤長押し=気温表示切替
+  - WMO天気コード → アイコンマッピング（0=晴, 1-3=曇, 51-55=霧雨, 61-65=雨, 71-75=雪, 80-82=にわか雨, 95+=雷雨）
+
+- [ ] **5-3c: 気温表示（オプション）**
+  - 赤ボタン長押しで気温を数字表示（2桁 + 度マーク）
+  - 数秒後に天気アイコンに自動復帰
+
+### 実装順序
+```
+5-1a（Wi-Fi+BLE共存確認）→ 5-1b（NVS設定）→ 5-2（HTTP天気取得）
+  → 5-3a（アセット）→ 5-3b（ハンドラー）→ 5-3c（気温表示）
+```
+
+### 旧5-4（汎用通知受信）について
+BLE経由の通知はPhase 4のNotificationHandlerで既にカバーされているため、Phase 5からは除外。
+Wi-Fi経由の汎用通知が必要になった場合はPhase 6以降で検討する。
 
 ## Phase 6: スマートホーム・コントローラー
 
