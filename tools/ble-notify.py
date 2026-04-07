@@ -58,7 +58,15 @@ def main() -> None:
         print(f"Usage: {sys.argv[0]} <{'|'.join(NOTIFICATION_TYPES.keys())}>", file=sys.stderr)
         sys.exit(1)
 
-    asyncio.run(send_notification(sys.argv[1]))
+    try:
+        asyncio.run(send_notification(sys.argv[1]))
+    except TimeoutError:
+        print(f"BLE: '{DEVICE_NAME}' connection timed out", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        # Show a concise one-line error instead of a full traceback
+        print(f"BLE: {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

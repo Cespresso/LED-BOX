@@ -1,0 +1,616 @@
+package com.example.ledboxdebug
+
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Binder
+import android.os.IBinder
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+
+enum class ConnectionState {
+    Disconnected, Scanning, Connecting, Bonding, Connected, Ready
+}
+
+/**
+ * Foreground Service that owns the BLE GATT connection and AudioVisualizer.
+ * Survives Activity/ViewModel lifecycle, keeping BLE and audio capture alive in background.
+ */
+@Suppress("DEPRECATION")
+class LedBoxService : Service() {
+
+    companion object {
+        private const val TAG = "LedBoxService"
+        private const val CHANNEL_ID = "led_box_service"
+        private const val NOTIFICATION_ID = 1
+        private const val DEVICE_NAME = "LED BOX"
+        val SERVICE_UUID: UUID = UUID.fromString("455aa9f0-2999-43de-81b4-54e0de255927")
+        val MODE_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18586")
+        val DISPLAY_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18585")
+        val TOOLS_SUBMODE_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18587")
+        val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+        val MODE_NAMES = mapOf(
+            0 to "Pet",
+            1 to "Pomodoro",
+            2 to "Tools",
+            3 to "Notification",
+            4 to "SmartHome",
+            5 to "Monitor",
+        )
+
+        val TOOLS_SUBMODE_NAMES = mapOf(
+            0 to "Dice",
+            1 to "Custom Display",
+        )
+    }
+
+    // --- Binder ---
+
+    inner class LocalBinder : Binder() {
+        val service: LedBoxService get() = this@LedBoxService
+    }
+
+    private val binder = LocalBinder()
+
+    override fun onBind(intent: Intent?): IBinder = binder
+
+    // --- Coroutine scope ---
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // --- State flows (observed by ViewModel/UI) ---
+
+    private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
+    val connectionState = _connectionState.asStateFlow()
+
+    private val _currentMode = MutableStateFlow<Int?>(null)
+    val currentMode = _currentMode.asStateFlow()
+
+    private val _displayData = MutableStateFlow(IntArray(8))
+    val displayData = _displayData.asStateFlow()
+
+    private val _currentToolsSubmode = MutableStateFlow<Int?>(null)
+    val currentToolsSubmode = _currentToolsSubmode.asStateFlow()
+
+    private val _logs = MutableStateFlow<List<String>>(emptyList())
+    val logs = _logs.asStateFlow()
+
+    val audioVisualizer = AudioVisualizerManager()
+
+    // --- BLE internals ---
+
+    private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+    private var bluetoothManager: BluetoothManager? = null
+    private var gatt: BluetoothGatt? = null
+    private var modeCharacteristic: BluetoothGattCharacteristic? = null
+    private var displayCharacteristic: BluetoothGattCharacteristic? = null
+    private var toolsSubmodeCharacteristic: BluetoothGattCharacteristic? = null
+    private var audioSendJob: Job? = null
+    private var reconnectJob: Job? = null
+
+    /** Address of last connected device, used for auto-reconnect. */
+    private var lastDeviceAddress: String? = null
+    /** Set to true when user explicitly disconnects (suppress auto-reconnect). */
+    private var userDisconnect = false
+
+    // --- Bond receiver ---
+
+    private val bondReceiver = object : BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+            val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                ?: return
+            val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
+            val prevState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.BOND_NONE)
+            log("Bond state: ${bondStateName(prevState)} -> ${bondStateName(state)}")
+
+            if (gatt?.device?.address != device.address) return
+
+            when (state) {
+                BluetoothDevice.BOND_BONDED -> {
+                    log("Bonded! Discovering services...")
+                    _connectionState.value = ConnectionState.Connected
+                    gatt?.discoverServices()
+                }
+                BluetoothDevice.BOND_NONE -> {
+                    if (prevState == BluetoothDevice.BOND_BONDING) {
+                        log("Bonding failed!")
+                        disconnect()
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Service lifecycle ---
+
+    override fun onCreate() {
+        super.onCreate()
+        bluetoothManager = getSystemService(BluetoothManager::class.java)
+        createNotificationChannel()
+        startForeground(NOTIFICATION_ID, buildNotification("Idle"))
+        registerReceiver(bondReceiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
+        Log.d(TAG, "Service created")
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        userDisconnect = true
+        reconnectJob?.cancel()
+        stopAudioVisualizer()
+        @SuppressLint("MissingPermission")
+        fun cleanup() {
+            bluetoothManager?.adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+            gatt?.disconnect()
+            gatt?.close()
+        }
+        cleanup()
+        unregisterReceiver(bondReceiver)
+        serviceScope.cancel()
+        Log.d(TAG, "Service destroyed")
+        super.onDestroy()
+    }
+
+    // --- Notification ---
+
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "LED BOX Connection",
+            NotificationManager.IMPORTANCE_LOW,
+        )
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+
+    private fun buildNotification(status: String): Notification {
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("LED BOX")
+            .setContentText(status)
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun updateNotification(status: String) {
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, buildNotification(status))
+    }
+
+    // --- Logging ---
+
+    private fun log(message: String) {
+        val timestamp = timeFormat.format(Date())
+        val entry = "[$timestamp] $message"
+        Log.d(TAG, message)
+        val current = _logs.value
+        _logs.value = if (current.size >= 200) {
+            current.drop(1) + entry
+        } else {
+            current + entry
+        }
+    }
+
+    private fun bondStateName(state: Int): String = when (state) {
+        BluetoothDevice.BOND_NONE -> "NONE"
+        BluetoothDevice.BOND_BONDING -> "BONDING"
+        BluetoothDevice.BOND_BONDED -> "BONDED"
+        else -> "UNKNOWN($state)"
+    }
+
+    // --- Public BLE actions ---
+
+    @SuppressLint("MissingPermission")
+    fun startScan() {
+        if (_connectionState.value != ConnectionState.Disconnected) return
+        userDisconnect = false
+
+        val scanner = bluetoothManager?.adapter?.bluetoothLeScanner
+        if (scanner == null) {
+            log("BLE Scanner not available")
+            return
+        }
+
+        _connectionState.value = ConnectionState.Scanning
+        updateNotification("Scanning...")
+        log("Scanning for '$DEVICE_NAME'...")
+
+        val filters = listOf(
+            ScanFilter.Builder().setDeviceName(DEVICE_NAME).build()
+        )
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+
+        scanner.startScan(filters, settings, scanCallback)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun disconnect() {
+        userDisconnect = true
+        reconnectJob?.cancel()
+        reconnectJob = null
+        stopAudioVisualizer()
+        bluetoothManager?.adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        gatt?.disconnect()
+        gatt?.close()
+        gatt = null
+        lastDeviceAddress = null
+        clearCharacteristics()
+        _connectionState.value = ConnectionState.Disconnected
+        _currentMode.value = null
+        _currentToolsSubmode.value = null
+        updateNotification("Disconnected")
+        log("Disconnected")
+    }
+
+    private fun clearCharacteristics() {
+        modeCharacteristic = null
+        displayCharacteristic = null
+        toolsSubmodeCharacteristic = null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun attemptReconnect() {
+        val address = lastDeviceAddress ?: return
+        val adapter = bluetoothManager?.adapter ?: return
+        val device = adapter.getRemoteDevice(address) ?: return
+
+        reconnectJob?.cancel()
+        reconnectJob = serviceScope.launch {
+            var attempt = 0
+            while (_connectionState.value != ConnectionState.Ready) {
+                attempt++
+                log("Reconnecting (attempt $attempt)...")
+                _connectionState.value = ConnectionState.Connecting
+                updateNotification("Reconnecting (#$attempt)...")
+
+                device.connectGatt(
+                    this@LedBoxService,
+                    true, // autoConnect: system manages reconnection timing
+                    gattCallback,
+                    BluetoothDevice.TRANSPORT_LE
+                )
+
+                // Wait before checking if we need another attempt
+                delay(10_000)
+                if (_connectionState.value == ConnectionState.Ready) break
+                if (userDisconnect) break
+
+                // Close stale gatt before retry
+                gatt?.close()
+                gatt = null
+            }
+            reconnectJob = null
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun writeMode(mode: Int) {
+        val char = modeCharacteristic ?: run {
+            log("Mode characteristic not available")
+            return
+        }
+        char.value = byteArrayOf(mode.toByte())
+        val success = gatt?.writeCharacteristic(char) ?: false
+        log("Write mode=$mode (${MODE_NAMES[mode]}): ${if (success) "sent" else "failed"}")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun writeDisplayData(data: IntArray) {
+        val char = displayCharacteristic ?: run {
+            log("Display characteristic not available")
+            return
+        }
+        char.value = ByteArray(8) { data[it].toByte() }
+        val success = gatt?.writeCharacteristic(char) ?: false
+        log("Write display: ${if (success) "sent" else "failed"}")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun readMode() {
+        val char = modeCharacteristic ?: return
+        gatt?.readCharacteristic(char)
+        log("Reading mode...")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun readDisplayData() {
+        val char = displayCharacteristic ?: return
+        gatt?.readCharacteristic(char)
+        log("Reading display data...")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun writeToolsSubmode(submode: Int) {
+        val char = toolsSubmodeCharacteristic ?: run {
+            log("Tools sub-mode characteristic not available")
+            return
+        }
+        char.value = byteArrayOf(submode.toByte())
+        val success = gatt?.writeCharacteristic(char) ?: false
+        log("Write tools sub-mode=$submode (${TOOLS_SUBMODE_NAMES[submode] ?: "unknown"}): ${if (success) "sent" else "failed"}")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun readToolsSubmode() {
+        val char = toolsSubmodeCharacteristic ?: return
+        gatt?.readCharacteristic(char)
+        log("Reading tools sub-mode...")
+    }
+
+    fun togglePixel(row: Int, col: Int) {
+        val data = _displayData.value.copyOf()
+        data[row] = data[row] xor (1 shl (7 - col))
+        _displayData.value = data
+    }
+
+    fun clearDisplay() {
+        _displayData.value = IntArray(8)
+    }
+
+    // --- Audio Visualizer ---
+
+    @SuppressLint("MissingPermission")
+    fun startAudioVisualizer() {
+        if (!audioVisualizer.start()) {
+            log("Audio visualizer failed to start (check RECORD_AUDIO permission)")
+            return
+        }
+        log("Audio visualizer started")
+        updateNotification("Audio Visualizer running")
+
+        audioSendJob = serviceScope.launch {
+            while (true) {
+                delay(80) // ~12.5 fps
+                val columns = audioVisualizer.columns.value
+                val char = displayCharacteristic ?: continue
+                char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                char.value = ByteArray(8) { columns[it].toByte() }
+                gatt?.writeCharacteristic(char)
+            }
+        }
+    }
+
+    fun stopAudioVisualizer() {
+        audioSendJob?.cancel()
+        audioSendJob = null
+        audioVisualizer.stop()
+        if (_connectionState.value == ConnectionState.Ready) {
+            updateNotification("Connected")
+        }
+        log("Audio visualizer stopped")
+    }
+
+    // --- BLE Callbacks ---
+
+    private val scanCallback = object : ScanCallback() {
+        @SuppressLint("MissingPermission")
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            bluetoothManager?.adapter?.bluetoothLeScanner?.stopScan(this)
+            _connectionState.value = ConnectionState.Connecting
+            updateNotification("Connecting...")
+            lastDeviceAddress = result.device.address
+            log("Found: ${result.device.address} (RSSI=${result.rssi})")
+
+            result.device.connectGatt(
+                this@LedBoxService,
+                false, // initial connect: direct connection (fast)
+                gattCallback,
+                BluetoothDevice.TRANSPORT_LE
+            )
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            _connectionState.value = ConnectionState.Disconnected
+            updateNotification("Scan failed")
+            log("Scan failed (error=$errorCode)")
+        }
+    }
+
+    private val gattCallback = object : BluetoothGattCallback() {
+
+        @SuppressLint("MissingPermission")
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            when (newState) {
+                BluetoothProfile.STATE_CONNECTED -> {
+                    this@LedBoxService.gatt = gatt
+                    val bondState = gatt.device.bondState
+                    log("Connected (bondState=${bondStateName(bondState)})")
+
+                    if (bondState == BluetoothDevice.BOND_BONDED) {
+                        _connectionState.value = ConnectionState.Connected
+                        updateNotification("Discovering services...")
+                        log("Already bonded, discovering services...")
+                        gatt.discoverServices()
+                    } else {
+                        _connectionState.value = ConnectionState.Bonding
+                        updateNotification("Bonding...")
+                        log("Initiating bonding (enter passkey: 123456)...")
+                        gatt.device.createBond()
+                    }
+                }
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    log("Connection lost (status=$status)")
+                    gatt.close()
+                    this@LedBoxService.gatt = null
+                    clearCharacteristics()
+                    stopAudioVisualizer()
+
+                    if (!userDisconnect && lastDeviceAddress != null) {
+                        _connectionState.value = ConnectionState.Connecting
+                        updateNotification("Reconnecting...")
+                        log("Will auto-reconnect...")
+                        attemptReconnect()
+                    } else {
+                        _connectionState.value = ConnectionState.Disconnected
+                        updateNotification("Disconnected")
+                    }
+                }
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                log("Service discovery failed (status=$status)")
+                return
+            }
+
+            val service = gatt.getService(SERVICE_UUID)
+            if (service == null) {
+                log("Service NOT found! Check UUID.")
+                return
+            }
+            log("Service found")
+
+            modeCharacteristic = service.getCharacteristic(MODE_UUID)
+            displayCharacteristic = service.getCharacteristic(DISPLAY_UUID)
+            toolsSubmodeCharacteristic = service.getCharacteristic(TOOLS_SUBMODE_UUID)
+
+            if (modeCharacteristic != null) {
+                log("Mode char found (props=${modeCharacteristic!!.properties})")
+            } else {
+                log("Mode characteristic NOT found!")
+            }
+
+            if (displayCharacteristic != null) {
+                log("Display char found (props=${displayCharacteristic!!.properties})")
+            } else {
+                log("Display characteristic NOT found!")
+            }
+
+            if (toolsSubmodeCharacteristic != null) {
+                log("Tools sub-mode char found (props=${toolsSubmodeCharacteristic!!.properties})")
+            } else {
+                log("Tools sub-mode characteristic NOT found")
+            }
+
+            // Enable notifications on mode characteristic
+            modeCharacteristic?.let { char ->
+                gatt.setCharacteristicNotification(char, true)
+                val descriptor = char.getDescriptor(CCCD_UUID)
+                if (descriptor != null) {
+                    descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    gatt.writeDescriptor(descriptor)
+                    log("Enabling mode notifications...")
+                } else {
+                    log("CCCD descriptor not found")
+                    _connectionState.value = ConnectionState.Ready
+                    updateNotification("Connected")
+                    log("Ready")
+                }
+            } ?: run {
+                _connectionState.value = ConnectionState.Ready
+                updateNotification("Connected")
+                log("Ready (no mode characteristic)")
+            }
+        }
+
+        override fun onDescriptorWrite(
+            gatt: BluetoothGatt,
+            descriptor: BluetoothGattDescriptor,
+            status: Int
+        ) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                log("Notification enabled")
+            } else {
+                log("Descriptor write failed (status=$status)")
+            }
+            _connectionState.value = ConnectionState.Ready
+            updateNotification("Connected")
+            log("Ready")
+            readMode()
+        }
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int
+        ) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                log("Read failed (status=$status)")
+                return
+            }
+            val value = characteristic.value ?: return
+            when (characteristic.uuid) {
+                MODE_UUID -> {
+                    val mode = value[0].toInt() and 0xFF
+                    _currentMode.value = mode
+                    log("Mode = $mode (${MODE_NAMES[mode] ?: "unknown"})")
+                }
+                DISPLAY_UUID -> {
+                    val data = IntArray(8) { if (it < value.size) value[it].toInt() and 0xFF else 0 }
+                    _displayData.value = data
+                    log("Display = ${data.joinToString(" ") { "%02X".format(it) }}")
+                }
+                TOOLS_SUBMODE_UUID -> {
+                    val submode = value[0].toInt() and 0xFF
+                    _currentToolsSubmode.value = submode
+                    log("Tools sub-mode = $submode (${TOOLS_SUBMODE_NAMES[submode] ?: "unknown"})")
+                }
+            }
+        }
+
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int
+        ) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                log("Write OK (${characteristic.uuid.toString().takeLast(4)})")
+                when (characteristic.uuid) {
+                    MODE_UUID -> readMode()
+                    TOOLS_SUBMODE_UUID -> readToolsSubmode()
+                }
+            } else {
+                log("Write FAILED (status=$status)")
+            }
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic
+        ) {
+            if (characteristic.uuid == MODE_UUID) {
+                val value = characteristic.value ?: return
+                val mode = value[0].toInt() and 0xFF
+                _currentMode.value = mode
+                log("Mode changed -> $mode (${MODE_NAMES[mode] ?: "unknown"})")
+            }
+        }
+    }
+}

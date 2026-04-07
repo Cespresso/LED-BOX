@@ -1,4 +1,5 @@
 pub mod default;
+pub mod monitor;
 pub mod notification;
 pub mod pet;
 pub mod pomodoro;
@@ -36,6 +37,7 @@ pub fn create_handler(mode: Mode, ble_display_data: [u8; 8]) -> Box<dyn ModeHand
         Mode::Pomodoro => Box::new(pomodoro::PomodoroHandler::new()),
         Mode::Tools => Box::new(tools::ToolsHandler::new(ble_display_data)),
         Mode::Notification => Box::new(notification::NotificationHandler::new()),
+        Mode::Monitor => Box::new(monitor::MonitorHandler::new()),
         _ => Box::new(default::DefaultHandler::new(mode)),
     }
 }

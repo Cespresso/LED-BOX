@@ -44,7 +44,7 @@ impl BluetoothManager {
         server.on_connect(|server, clntdesc| {
             log::info!("BLE client connected: {:?}", clntdesc);
             server
-                .update_conn_params(clntdesc.conn_handle(), 24, 48, 0, 60)
+                .update_conn_params(clntdesc.conn_handle(), 24, 48, 0, 200)
                 .unwrap();
         });
 
@@ -87,13 +87,14 @@ impl BluetoothManager {
             }
         });
 
-        // --- Display Data Characteristic (READ | WRITE) ---
+        // --- Display Data Characteristic (READ | WRITE | WRITE_NR) ---
         let display_characteristic = service.lock().create_characteristic(
             uuid128!("681285a6-247f-48c6-80ad-68c3dce18585"),
             NimbleProperties::READ
                 | NimbleProperties::READ_ENC
                 | NimbleProperties::WRITE
-                | NimbleProperties::WRITE_ENC,
+                | NimbleProperties::WRITE_ENC
+                | NimbleProperties::WRITE_NO_RSP,
         );
 
         let state_clone = state.clone();

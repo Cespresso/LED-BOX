@@ -9,13 +9,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -36,11 +39,7 @@ import androidx.compose.runtime.collectAsState
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LedBoxScreen(viewModel: LedBoxViewModel) {
-    val connectionState by viewModel.connectionState.collectAsState()
-    val currentMode by viewModel.currentMode.collectAsState()
-    val displayData by viewModel.displayData.collectAsState()
-    val currentToolsSubmode by viewModel.currentToolsSubmode.collectAsState()
-    val logs by viewModel.logs.collectAsState()
+    val service by viewModel.service.collectAsState()
 
     Scaffold(
         topBar = {
@@ -52,46 +51,79 @@ fun LedBoxScreen(viewModel: LedBoxViewModel) {
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            ConnectionSection(
-                state = connectionState,
-                onScan = viewModel::startScan,
-                onDisconnect = viewModel::disconnect,
+        val svc = service
+        if (svc == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            LedBoxContent(svc, Modifier.padding(padding))
+        }
+    }
+}
+
+@Composable
+private fun LedBoxContent(svc: LedBoxService, modifier: Modifier) {
+    val connectionState by svc.connectionState.collectAsState()
+    val currentMode by svc.currentMode.collectAsState()
+    val displayData by svc.displayData.collectAsState()
+    val currentToolsSubmode by svc.currentToolsSubmode.collectAsState()
+    val audioColumns by svc.audioVisualizer.columns.collectAsState()
+    val audioActive by svc.audioVisualizer.isActive.collectAsState()
+    val logs by svc.logs.collectAsState()
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        ConnectionSection(
+            state = connectionState,
+            onScan = svc::startScan,
+            onDisconnect = svc::disconnect,
+        )
+
+        if (connectionState == ConnectionState.Ready) {
+            ModeSection(
+                currentMode = currentMode,
+                onModeSelect = svc::writeMode,
+                onReadMode = svc::readMode,
             )
 
-            if (connectionState == ConnectionState.Ready) {
-                ModeSection(
-                    currentMode = currentMode,
-                    onModeSelect = viewModel::writeMode,
-                    onReadMode = viewModel::readMode,
-                )
-
-                if (currentMode == 2) {
-                    ToolsSubmodeSection(
-                        currentSubmode = currentToolsSubmode,
-                        onSubmodeSelect = viewModel::writeToolsSubmode,
-                        onReadSubmode = viewModel::readToolsSubmode,
-                    )
-                }
-
-                DisplaySection(
-                    data = displayData,
-                    onTogglePixel = viewModel::togglePixel,
-                    onSend = { viewModel.writeDisplayData(displayData) },
-                    onClear = viewModel::clearDisplay,
-                    onRead = viewModel::readDisplayData,
+            if (currentMode == 2) {
+                ToolsSubmodeSection(
+                    currentSubmode = currentToolsSubmode,
+                    onSubmodeSelect = svc::writeToolsSubmode,
+                    onReadSubmode = svc::readToolsSubmode,
                 )
             }
 
-            LogSection(logs = logs)
+            if (currentMode == 5) {
+                AudioVisualizerSection(
+                    columns = audioColumns,
+                    isActive = audioActive,
+                    onStart = svc::startAudioVisualizer,
+                    onStop = svc::stopAudioVisualizer,
+                )
+            }
+
+            DisplaySection(
+                data = displayData,
+                onTogglePixel = svc::togglePixel,
+                onSend = { svc.writeDisplayData(displayData) },
+                onClear = svc::clearDisplay,
+                onRead = svc::readDisplayData,
+            )
         }
+
+        LogSection(logs = logs)
     }
 }
 
@@ -170,7 +202,7 @@ private fun ModeSection(
                 Text(
                     text = "Current: 0x%02X (%s)".format(
                         currentMode,
-                        LedBoxViewModel.MODE_NAMES[currentMode] ?: "unknown"
+                        LedBoxService.MODE_NAMES[currentMode] ?: "unknown"
                     ),
                     fontFamily = FontFamily.Monospace,
                 )
@@ -183,7 +215,7 @@ private fun ModeSection(
                 ) {
                     for (col in 0..2) {
                         val mode = row * 3 + col
-                        val name = LedBoxViewModel.MODE_NAMES[mode] ?: "?"
+                        val name = LedBoxService.MODE_NAMES[mode] ?: "?"
                         val isActive = currentMode == mode
 
                         if (isActive) {
@@ -285,7 +317,7 @@ private fun ToolsSubmodeSection(
                 Text(
                     text = "Current: %d (%s)".format(
                         currentSubmode,
-                        LedBoxViewModel.TOOLS_SUBMODE_NAMES[currentSubmode] ?: "unknown"
+                        LedBoxService.TOOLS_SUBMODE_NAMES[currentSubmode] ?: "unknown"
                     ),
                     fontFamily = FontFamily.Monospace,
                 )
@@ -295,7 +327,7 @@ private fun ToolsSubmodeSection(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                LedBoxViewModel.TOOLS_SUBMODE_NAMES.forEach { (id, name) ->
+                LedBoxService.TOOLS_SUBMODE_NAMES.forEach { (id, name) ->
                     val isActive = currentSubmode == id
                     if (isActive) {
                         Button(
@@ -312,6 +344,58 @@ private fun ToolsSubmodeSection(
                             Text(name, fontSize = 12.sp)
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AudioVisualizerSection(
+    columns: IntArray,
+    isActive: Boolean,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Audio Visualizer", style = MaterialTheme.typography.titleMedium)
+
+            // Bar graph preview
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                for (col in 0 until 8) {
+                    val h = columns[col].coerceIn(0, 8)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            modifier = Modifier
+                                .width(28.dp)
+                                .height((h * 10).coerceAtLeast(2).dp)
+                                .background(
+                                    if (h > 0) Color(0xFF4CAF50) else Color(0xFFE0E0E0)
+                                )
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = columns.joinToString(" ") { "$it" },
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isActive) {
+                    Button(onClick = onStop) { Text("Stop") }
+                } else {
+                    Button(onClick = onStart) { Text("Start") }
                 }
             }
         }
