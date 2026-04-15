@@ -9,16 +9,19 @@ pub enum BleCommand {
     SwitchMode(u8),
     SetDisplayData([u8; 8]),
     SetToolsSubMode(u8),
+    SetBrightness(u8),
 }
 
 struct BleState {
     pending_command: Option<BleCommand>,
     display_data: [u8; 8],
+    brightness: u8,
 }
 
 pub struct BluetoothManager {
     state: Arc<Mutex<BleState>>,
     mode_characteristic: Arc<Mutex<BLECharacteristic>>,
+    brightness_characteristic: Arc<Mutex<BLECharacteristic>>,
 }
 
 impl BluetoothManager {
@@ -26,6 +29,7 @@ impl BluetoothManager {
         let state = Arc::new(Mutex::new(BleState {
             pending_command: None,
             display_data: [0u8; 8],
+            brightness: 0x0F,
         }));
 
         let ble_device = BLEDevice::take();
@@ -141,6 +145,36 @@ impl BluetoothManager {
             state_clone.lock().pending_command = Some(BleCommand::SetToolsSubMode(submode));
         });
 
+        // --- Brightness Characteristic (READ | WRITE | NOTIFY) ---
+        let brightness_characteristic = service.lock().create_characteristic(
+            uuid128!("681285a6-247f-48c6-80ad-68c3dce18588"),
+            NimbleProperties::READ
+                | NimbleProperties::READ_ENC
+                | NimbleProperties::WRITE
+                | NimbleProperties::WRITE_ENC
+                | NimbleProperties::NOTIFY,
+        );
+        brightness_characteristic
+            .lock()
+            .set_value(&[0x0F]); // default: max brightness
+
+        let state_clone = state.clone();
+        brightness_characteristic.lock().on_write(move |value| {
+            let data = value.recv_data();
+            log::info!("BLE brightness write: {:?}", data);
+
+            if data.is_empty() {
+                log::warn!("BLE: brightness write empty, ignoring");
+                return;
+            }
+
+            let level = data[0].min(0x0F);
+            log::info!("BLE cmd: SetBrightness({})", level);
+            let mut state = state_clone.lock();
+            state.brightness = level;
+            state.pending_command = Some(BleCommand::SetBrightness(level));
+        });
+
         // Configure and start advertising
         ble_advertiser
             .lock()
@@ -156,6 +190,7 @@ impl BluetoothManager {
         Ok(Self {
             state,
             mode_characteristic,
+            brightness_characteristic,
         })
     }
 
@@ -175,6 +210,14 @@ impl BluetoothManager {
         self.mode_characteristic
             .lock()
             .set_value(&[mode])
+            .notify();
+    }
+
+    /// Update the Brightness Characteristic value and notify connected clients.
+    pub fn notify_brightness_change(&self, level: u8) {
+        self.brightness_characteristic
+            .lock()
+            .set_value(&[level])
             .notify();
     }
 }

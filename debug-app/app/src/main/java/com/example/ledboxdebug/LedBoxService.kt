@@ -57,6 +57,7 @@ class LedBoxService : Service() {
         val MODE_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18586")
         val DISPLAY_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18585")
         val TOOLS_SUBMODE_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18587")
+        val BRIGHTNESS_UUID: UUID = UUID.fromString("681285a6-247f-48c6-80ad-68c3dce18588")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         val MODE_NAMES = mapOf(
@@ -102,6 +103,9 @@ class LedBoxService : Service() {
     private val _currentToolsSubmode = MutableStateFlow<Int?>(null)
     val currentToolsSubmode = _currentToolsSubmode.asStateFlow()
 
+    private val _brightness = MutableStateFlow(0x0F)
+    val brightness = _brightness.asStateFlow()
+
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs = _logs.asStateFlow()
 
@@ -115,6 +119,7 @@ class LedBoxService : Service() {
     private var modeCharacteristic: BluetoothGattCharacteristic? = null
     private var displayCharacteristic: BluetoothGattCharacteristic? = null
     private var toolsSubmodeCharacteristic: BluetoothGattCharacteristic? = null
+    private var brightnessCharacteristic: BluetoothGattCharacteristic? = null
     private var audioSendJob: Job? = null
     private var reconnectJob: Job? = null
 
@@ -281,6 +286,7 @@ class LedBoxService : Service() {
         modeCharacteristic = null
         displayCharacteristic = null
         toolsSubmodeCharacteristic = null
+        brightnessCharacteristic = null
     }
 
     @SuppressLint("MissingPermission")
@@ -370,6 +376,26 @@ class LedBoxService : Service() {
         val char = toolsSubmodeCharacteristic ?: return
         gatt?.readCharacteristic(char)
         log("Reading tools sub-mode...")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun writeBrightness(level: Int) {
+        val char = brightnessCharacteristic ?: run {
+            log("Brightness characteristic not available")
+            return
+        }
+        val clamped = level.coerceIn(0, 0x0F)
+        char.value = byteArrayOf(clamped.toByte())
+        val success = gatt?.writeCharacteristic(char) ?: false
+        log("Write brightness=$clamped: ${if (success) "sent" else "failed"}")
+        if (success) _brightness.value = clamped
+    }
+
+    @SuppressLint("MissingPermission")
+    fun readBrightness() {
+        val char = brightnessCharacteristic ?: return
+        gatt?.readCharacteristic(char)
+        log("Reading brightness...")
     }
 
     fun togglePixel(row: Int, col: Int) {
@@ -500,6 +526,13 @@ class LedBoxService : Service() {
             modeCharacteristic = service.getCharacteristic(MODE_UUID)
             displayCharacteristic = service.getCharacteristic(DISPLAY_UUID)
             toolsSubmodeCharacteristic = service.getCharacteristic(TOOLS_SUBMODE_UUID)
+            brightnessCharacteristic = service.getCharacteristic(BRIGHTNESS_UUID)
+
+            if (brightnessCharacteristic != null) {
+                log("Brightness char found (props=${brightnessCharacteristic!!.properties})")
+            } else {
+                log("Brightness characteristic NOT found! Try disconnect & reconnect.")
+            }
 
             if (modeCharacteristic != null) {
                 log("Mode char found (props=${modeCharacteristic!!.properties})")
@@ -582,6 +615,11 @@ class LedBoxService : Service() {
                     _currentToolsSubmode.value = submode
                     log("Tools sub-mode = $submode (${TOOLS_SUBMODE_NAMES[submode] ?: "unknown"})")
                 }
+                BRIGHTNESS_UUID -> {
+                    val level = value[0].toInt() and 0xFF
+                    _brightness.value = level
+                    log("Brightness = $level")
+                }
             }
         }
 
@@ -595,6 +633,7 @@ class LedBoxService : Service() {
                 when (characteristic.uuid) {
                     MODE_UUID -> readMode()
                     TOOLS_SUBMODE_UUID -> readToolsSubmode()
+                    BRIGHTNESS_UUID -> readBrightness()
                 }
             } else {
                 log("Write FAILED (status=$status)")
@@ -605,11 +644,18 @@ class LedBoxService : Service() {
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic
         ) {
-            if (characteristic.uuid == MODE_UUID) {
-                val value = characteristic.value ?: return
-                val mode = value[0].toInt() and 0xFF
-                _currentMode.value = mode
-                log("Mode changed -> $mode (${MODE_NAMES[mode] ?: "unknown"})")
+            val value = characteristic.value ?: return
+            when (characteristic.uuid) {
+                MODE_UUID -> {
+                    val mode = value[0].toInt() and 0xFF
+                    _currentMode.value = mode
+                    log("Mode changed -> $mode (${MODE_NAMES[mode] ?: "unknown"})")
+                }
+                BRIGHTNESS_UUID -> {
+                    val level = value[0].toInt() and 0xFF
+                    _brightness.value = level
+                    log("Brightness changed -> $level")
+                }
             }
         }
     }

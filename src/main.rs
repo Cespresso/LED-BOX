@@ -74,6 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 BleCommand::SetToolsSubMode(submode) => {
                     handler.on_ble_submode(submode);
                 }
+                BleCommand::SetBrightness(level) => {
+                    display.set_intensity(level);
+                    ble.notify_brightness_change(level);
+                    log::info!("Brightness set to {}", level);
+                }
             }
         }
 

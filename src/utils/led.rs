@@ -45,6 +45,14 @@ impl<'d> Display<'d> {
         Ok(Self { spi })
     }
 
+    /// Set display intensity (brightness). `level` is clamped to 0x00..=0x0F.
+    pub fn set_intensity(&mut self, level: u8) {
+        let level = level.min(0x0F);
+        log::info!("SPI write intensity register: 0x0A, 0x{:02X}", level);
+        self.spi.write(&[0x0A, level]).unwrap();
+        log::info!("SPI intensity write done");
+    }
+
     /// Write 8 bytes of row data to the LED matrix.
     /// Falls back to a default smiley face if data is shorter than 8 bytes.
     /// Data is rotated 180° to compensate for the upside-down mounted MAX7219.

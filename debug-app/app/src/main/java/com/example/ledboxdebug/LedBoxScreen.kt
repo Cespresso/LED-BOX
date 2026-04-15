@@ -23,11 +23,15 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -73,6 +77,7 @@ private fun LedBoxContent(svc: LedBoxService, modifier: Modifier) {
     val currentMode by svc.currentMode.collectAsState()
     val displayData by svc.displayData.collectAsState()
     val currentToolsSubmode by svc.currentToolsSubmode.collectAsState()
+    val brightness by svc.brightness.collectAsState()
     val audioColumns by svc.audioVisualizer.columns.collectAsState()
     val audioActive by svc.audioVisualizer.isActive.collectAsState()
     val logs by svc.logs.collectAsState()
@@ -95,6 +100,12 @@ private fun LedBoxContent(svc: LedBoxService, modifier: Modifier) {
                 currentMode = currentMode,
                 onModeSelect = svc::writeMode,
                 onReadMode = svc::readMode,
+            )
+
+            BrightnessSection(
+                brightness = brightness,
+                onBrightnessChange = svc::writeBrightness,
+                onReadBrightness = svc::readBrightness,
             )
 
             if (currentMode == 2) {
@@ -236,6 +247,46 @@ private fun ModeSection(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun BrightnessSection(
+    brightness: Int,
+    onBrightnessChange: (Int) -> Unit,
+    onReadBrightness: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Brightness", style = MaterialTheme.typography.titleMedium)
+                OutlinedButton(onClick = onReadBrightness) {
+                    Text("Read", fontSize = 12.sp)
+                }
+            }
+
+            var sliderValue by remember(brightness) { mutableFloatStateOf(brightness.toFloat()) }
+
+            Text(
+                text = "${sliderValue.toInt()} / 15",
+                fontFamily = FontFamily.Monospace,
+            )
+
+            Slider(
+                value = sliderValue,
+                onValueChange = { sliderValue = it },
+                onValueChangeFinished = { onBrightnessChange(sliderValue.toInt()) },
+                valueRange = 0f..15f,
+                steps = 14,
+            )
         }
     }
 }
