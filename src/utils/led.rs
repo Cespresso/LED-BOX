@@ -33,14 +33,18 @@ impl<'d> Display<'d> {
         });
         let mut spi = SpiDeviceDriver::new(spi_drv, Some(cs), &config)?;
 
-        // Power Up Device
-        spi.write(&[0x0C, 0x01]).unwrap();
-        // Set up Decode Mode (No Decode)
-        spi.write(&[0x09, 0x00]).unwrap();
-        // Configure Scan Limit (All digits)
-        spi.write(&[0x0B, 0x07]).unwrap();
-        // Configure Intensity (Maximum)
-        spi.write(&[0x0A, 0x0F]).unwrap();
+        // Configure every register explicitly rather than relying on the
+        // power-on-reset defaults (unreliable, especially out of spec), and
+        // exit shutdown LAST so the display turns on already configured and
+        // blank instead of flashing whatever the registers powered up with.
+        spi.write(&[0x0F, 0x00])?; // Display test off
+        spi.write(&[0x09, 0x00])?; // Decode mode: none (matrix mode)
+        spi.write(&[0x0B, 0x07])?; // Scan limit: all 8 rows
+        spi.write(&[0x0A, 0x0F])?; // Intensity: maximum
+        for addr in 1..=8u8 {
+            spi.write(&[addr, 0x00])?; // Clear all row registers
+        }
+        spi.write(&[0x0C, 0x01])?; // Exit shutdown (normal operation)
 
         Ok(Self { spi })
     }
