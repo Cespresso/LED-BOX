@@ -2,3 +2,6 @@
 /.embuild
 /target
 /Cargo.lock
+
+# CI が Release から取り込む生成物（コミットしない）
+/docs/led-box-merged.bin

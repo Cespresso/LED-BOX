@@ -97,6 +97,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 最新 Release の firmware を docs/ に取り込む。
+      # GitHub Release アセットの CDN は CORS ヘッダを返さないため、
+      # ESP Web Tools が fetch() できるよう manifest と同一オリジン（Pages）で配信する。
+      - name: Fetch latest firmware into docs/
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo "${{ github.repository }}" \
+            --pattern led-box-merged.bin \
+            --dir docs --clobber
+          ls -lh docs/led-box-merged.bin
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

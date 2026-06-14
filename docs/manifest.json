@@ -8,7 +8,7 @@
       "chipFamily": "ESP32-C3",
       "parts": [
         {
-          "path": "https://github.com/Cespresso/LED-BOX/releases/latest/download/led-box-merged.bin",
+          "path": "./led-box-merged.bin",
           "offset": 0
         }
       ]
