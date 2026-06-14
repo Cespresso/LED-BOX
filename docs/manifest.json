@@ -1,0 +1,17 @@
+{
+  "name": "LED BOX",
+  "version": "0.1.0",
+  "home_assistant_domain": "esphome",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-C3",
+      "parts": [
+        {
+          "path": "https://github.com/Cespresso/LED-BOX/releases/latest/download/led-box-merged.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
