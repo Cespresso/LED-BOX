@@ -23,29 +23,26 @@ jobs:
   # ───────────────────────────────────────────────
   build:
     runs-on: ubuntu-latest
-    # Rust + ESP-IDF + riscv32imc ツールチェインが全部入った公式イメージ
-    container:
-      image: espressif/idf-rust:all_latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # コンテナ内の esp toolchain / cargo を PATH に通す
-      - name: Setup environment
-        run: |
-          echo "${HOME}/.rustup/toolchains/esp/bin" >> "$GITHUB_PATH"
-          echo "${HOME}/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: Cache cargo registry & build
-        uses: actions/cache@v4
+      # esp-rs 公式アクション。esp toolchain / riscv32imc ターゲット / ldproxy を
+      # セットアップする（ESP-IDF 本体は cargo build 時に esp-idf-sys が取得）
+      - name: Install Rust ESP toolchain
+        uses: esp-rs/xtensa-toolchain@v1.5
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
+          default: true
+          buildtargets: esp32c3
+          ldproxy: true
+
+      # cargo registry / target / ESP-IDF キャッシュをまとめて面倒みる
+      - name: Cache build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: |
+            .embuild
+            ~/.espressif
 
       - name: Build (release)
         run: cargo build --release
