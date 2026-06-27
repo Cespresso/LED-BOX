@@ -4,9 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LED BOX インストーラ</title>
+  <!-- WebUSB 対応フォーク（tasmota-esp-web-tools, Apache-2.0）。
+       デスクトップの Web Serial に加え、Android Chrome + USB-OTG での
+       書き込みに対応する。配布の再現性のためバージョンは固定。
+       更新時は @12.2.4 の数字を上げる。 -->
   <script
     type="module"
-    src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+    src="https://unpkg.com/tasmota-esp-web-tools@12.2.4/dist/web/install-button.js?module"></script>
   <style>
     :root {
       --bg: #0d1117;
@@ -102,7 +106,7 @@
       <esp-web-install-button manifest="./manifest.json">
         <button slot="activate">⚡ インストール</button>
         <span slot="unsupported">
-          このブラウザは未対応です。Chrome または Edge を使用してください。
+          このブラウザは未対応です。PC は Chrome / Edge、スマホは Android の Chrome を使用してください（iOS・Safari・Firefox は非対応）。
         </span>
         <span slot="not-allowed">
           HTTPS 接続でのみ利用できます。
@@ -113,9 +117,14 @@
     <div class="card">
       <h2>手順</h2>
       <ol>
-        <li>LED BOX を USB ケーブルで PC に接続</li>
+        <li>LED BOX を USB ケーブルで接続
+          <ul>
+            <li><strong>PC：</strong>Chrome / Edge にそのまま接続</li>
+            <li><strong>Android スマホ：</strong>USB-OTG ケーブルで接続し Chrome でこのページを開く</li>
+          </ul>
+        </li>
         <li>上の「⚡ インストール」を押す</li>
-        <li>表示されたシリアルポートを選択</li>
+        <li>表示されたシリアルポート / USB デバイスを選択</li>
         <li>書き込み完了を待つ（自動で再起動します）</li>
       </ol>
     </div>
@@ -131,14 +140,16 @@
     </div>
 
     <div class="note">
-      <strong>対応ブラウザ：</strong> Chrome / Edge / Opera（デスクトップ版）。
-      Safari・Firefox・スマートフォンは Web Serial 非対応のため利用できません。<br />
+      <strong>対応環境：</strong> デスクトップの Chrome / Edge / Opera（Web Serial）に加え、
+      <strong>Android の Chrome（USB-OTG / WebUSB）</strong>でも書き込めます。
+      iOS（iPhone / iPad）と Safari・Firefox は非対応です。<br />
+      Android では充電専用ではなく<strong>データ通信対応の OTG ケーブル</strong>を使用してください。<br />
       初回書き込み時はフラッシュ全体が消去されます（保存済みの設定はリセットされます）。
     </div>
 
     <footer>
       Powered by
-      <a href="https://github.com/esphome/esp-web-tools" target="_blank" rel="noopener">ESP Web Tools</a>
+      <a href="https://github.com/Jason2866/esp-web-tools" target="_blank" rel="noopener">ESP Web Tools (WebUSB対応版)</a>
       (Apache-2.0) ·
       <a href="https://github.com/Cespresso/LED-BOX" target="_blank" rel="noopener">ソースコード</a>
     </footer>
