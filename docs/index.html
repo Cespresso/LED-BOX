@@ -130,10 +130,28 @@
     </div>
 
     <div class="card">
+      <h2>書き込み後の使い方</h2>
+      <ol>
+        <li>「インストール完了」後に表示される<strong>空のダイアログは閉じて OK</strong> です
+          （仕様です。デバイスはすでに起動しています）</li>
+        <li><strong>LED が点灯</strong>し、初期モード（Pomodoro）のアイコンが表示されます</li>
+        <li>スマホ / PC の Bluetooth から <code>LED BOX ****</code>（末尾 4 文字は個体ごとに異なる）に接続。
+          ペアリングのパスキーは <code>123456</code></li>
+        <li>本体の 2 つのボタンで操作：
+          <ul>
+            <li><strong>白を長押し</strong>：モード切替（Pet → Pomodoro → Tools → Notification → SmartHome → Monitor → …）</li>
+            <li><strong>赤 / 白を短押し</strong>：各モードでの操作</li>
+          </ul>
+        </li>
+        <li>明るさ・モードは <strong>BLE 経由</strong>でも変更できます</li>
+      </ol>
+    </div>
+
+    <div class="card">
       <h2>デバイス情報</h2>
       <ul class="specs">
         <li><span class="k">MCU</span><span class="v">ESP32-C3</span></li>
-        <li><span class="k">BLE デバイス名</span><span class="v">LED BOX</span></li>
+        <li><span class="k">BLE デバイス名</span><span class="v">LED BOX ****</span></li>
         <li><span class="k">BLE パスキー</span><span class="v">123456</span></li>
         <li><span class="k">LED</span><span class="v">8x8 マトリクス (MAX7219)</span></li>
       </ul>
