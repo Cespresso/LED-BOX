@@ -4,13 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LED BOX インストーラ</title>
-  <!-- WebUSB 対応フォーク（tasmota-esp-web-tools, Apache-2.0）。
-       デスクトップの Web Serial に加え、Android Chrome + USB-OTG での
-       書き込みに対応する。配布の再現性のためバージョンは固定。
-       更新時は @12.2.4 の数字を上げる。 -->
-  <script
-    type="module"
-    src="https://unpkg.com/tasmota-esp-web-tools@12.2.4/dist/web/install-button.js?module"></script>
+
+  <!-- インストール方式を URL の ?v= で選択する。
+       選んだエンジンのスクリプトだけを後段で動的ロードする
+       （両エンジンは同じ <esp-web-install-button> を定義するため、
+        1ページに両方は読み込めない）。
+         ?v=pc     … 公式 esp-web-tools（Web Serial / PC のみ）
+         ?v=mobile … tasmota-esp-web-tools（WebUSB / PC + Android）
+       data-v を <html> に先付けして表示のちらつきを防ぐ。 -->
+  <script>
+    (function () {
+      var v = new URLSearchParams(location.search).get("v");
+      document.documentElement.dataset.v =
+        v === "pc" || v === "mobile" ? v : "none";
+    })();
+  </script>
+
   <style>
     :root {
       --bg: #0d1117;
@@ -93,6 +102,41 @@
       font-size: 0.85rem;
       margin-top: 2rem;
     }
+
+    /* --- バージョン選択 --- */
+    .choice h2 { margin-bottom: 0.4rem; }
+    .choice .tag {
+      display: inline-block;
+      font-size: 0.75rem;
+      padding: 0.1rem 0.5rem;
+      border-radius: 999px;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+    }
+    .tag.rec { background: rgba(47, 129, 247, 0.18); color: var(--accent); }
+    .tag.new { background: rgba(63, 185, 80, 0.18); color: #3fb950; }
+    .choice p { color: var(--muted); line-height: 1.7; margin: 0 0 1rem; font-size: 0.95rem; }
+    .choice-btn {
+      display: inline-block;
+      padding: 0.6rem 1.2rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .ver-banner {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin: 0 0 1.5rem;
+    }
+
+    /* バージョンに応じた出し分け（<html data-v> で制御） */
+    html[data-v="none"] #installer { display: none; }
+    html[data-v="pc"] #chooser,
+    html[data-v="mobile"] #chooser { display: none; }
+    html:not([data-v="mobile"]) .mobile-only { display: none; }
+    html:not([data-v="pc"]) .pc-only { display: none; }
   </style>
 </head>
 <body>
@@ -102,75 +146,134 @@
       ブラウザから ESP32-C3 へファームウェアを書き込みます。ツールのインストールは不要です。
     </p>
 
-    <div class="card install-wrap">
-      <esp-web-install-button manifest="./manifest.json">
-        <button slot="activate">⚡ インストール</button>
-        <span slot="unsupported">
-          このブラウザは未対応です。PC は Chrome / Edge、スマホは Android の Chrome を使用してください（iOS・Safari・Firefox は非対応）。
-        </span>
-        <span slot="not-allowed">
-          HTTPS 接続でのみ利用できます。
-        </span>
-      </esp-web-install-button>
+    <!-- ===== バージョン選択（?v= 未指定のとき表示） ===== -->
+    <div id="chooser">
+      <div class="card choice">
+        <h2>PC専用（公式版）<span class="tag rec">推奨</span></h2>
+        <p>
+          本家 ESP Web Tools（Web Serial）。実績のある公式ツールで書き込みます。
+          対応は <strong>PC の Chrome / Edge / Opera（デスクトップ）</strong>のみ。スマホは使えません。
+        </p>
+        <a class="choice-btn" href="?v=pc">この方法で進む →</a>
+      </div>
+
+      <div class="card choice">
+        <h2>PC + スマホ版<span class="tag new">WebUSB</span></h2>
+        <p>
+          上記に加えて <strong>Android の Chrome（USB-OTG）</strong>でも書き込めます。
+          コミュニティ製フォーク（tasmota-esp-web-tools）を使用します。
+        </p>
+        <a class="choice-btn" href="?v=mobile">この方法で進む →</a>
+      </div>
+
+      <div class="note">
+        書き込まれるファームウェアはどちらも同一です。迷ったら<strong>「PC専用（公式版）」</strong>を、
+        スマホから書き込みたいときは<strong>「PC + スマホ版」</strong>を選んでください。
+      </div>
     </div>
 
-    <div class="card">
-      <h2>手順</h2>
-      <ol>
-        <li>LED BOX を USB ケーブルで接続
-          <ul>
-            <li><strong>PC：</strong>Chrome / Edge にそのまま接続</li>
-            <li><strong>Android スマホ：</strong>USB-OTG ケーブルで接続し Chrome でこのページを開く</li>
-          </ul>
-        </li>
-        <li>上の「⚡ インストール」を押す</li>
-        <li>表示されたシリアルポート / USB デバイスを選択</li>
-        <li>書き込み完了を待つ（自動で再起動します）</li>
-      </ol>
-    </div>
+    <!-- ===== インストーラ（?v=pc / ?v=mobile のとき表示） ===== -->
+    <div id="installer">
+      <p class="ver-banner">
+        <span class="pc-only">PC専用（公式）版</span><span class="mobile-only">PC + スマホ（WebUSB）版</span>で書き込みます。
+        <a href="./">別の方法を選ぶ</a>
+      </p>
 
-    <div class="card">
-      <h2>書き込み後の使い方</h2>
-      <ol>
-        <li>「インストール完了」後に表示される<strong>空のダイアログは閉じて OK</strong> です
-          （仕様です。デバイスはすでに起動しています）</li>
-        <li><strong>LED が点灯</strong>し、初期モード（Pomodoro）のアイコンが表示されます</li>
-        <li>スマホ / PC の Bluetooth から <code>LED BOX ****</code>（末尾 4 文字は個体ごとに異なる）に接続。
-          ペアリングのパスキーは <code>123456</code></li>
-        <li>本体の 2 つのボタンで操作：
-          <ul>
-            <li><strong>白を長押し</strong>：モード切替（Pet → Pomodoro → Tools → Notification → SmartHome → Monitor → …）</li>
-            <li><strong>赤 / 白を短押し</strong>：各モードでの操作</li>
-          </ul>
-        </li>
-        <li>明るさ・モードは <strong>BLE 経由</strong>でも変更できます</li>
-      </ol>
-    </div>
+      <div class="card install-wrap">
+        <esp-web-install-button manifest="./manifest.json">
+          <button slot="activate">⚡ インストール</button>
+          <span slot="unsupported">
+            このブラウザは未対応です。PC は Chrome / Edge / Opera<span class="mobile-only">、スマホは Android の Chrome</span>をご利用ください（iOS・Safari・Firefox は非対応）。
+          </span>
+          <span slot="not-allowed">
+            HTTPS 接続でのみ利用できます。
+          </span>
+        </esp-web-install-button>
+      </div>
 
-    <div class="card">
-      <h2>デバイス情報</h2>
-      <ul class="specs">
-        <li><span class="k">MCU</span><span class="v">ESP32-C3</span></li>
-        <li><span class="k">BLE デバイス名</span><span class="v">LED BOX ****</span></li>
-        <li><span class="k">BLE パスキー</span><span class="v">123456</span></li>
-        <li><span class="k">LED</span><span class="v">8x8 マトリクス (MAX7219)</span></li>
-      </ul>
-    </div>
+      <div class="card">
+        <h2>手順</h2>
+        <ol>
+          <li>LED BOX を USB ケーブルで接続
+            <ul>
+              <li><strong>PC：</strong>Chrome / Edge にそのまま接続</li>
+              <li class="mobile-only"><strong>Android スマホ：</strong>USB-OTG ケーブルで接続し Chrome でこのページを開く</li>
+            </ul>
+          </li>
+          <li>上の「⚡ インストール」を押す</li>
+          <li>表示されたシリアルポート / USB デバイスを選択</li>
+          <li>書き込み完了を待つ（自動で再起動します）</li>
+        </ol>
+      </div>
 
-    <div class="note">
-      <strong>対応環境：</strong> デスクトップの Chrome / Edge / Opera（Web Serial）に加え、
-      <strong>Android の Chrome（USB-OTG / WebUSB）</strong>でも書き込めます。
-      iOS（iPhone / iPad）と Safari・Firefox は非対応です。<br />
-      Android では充電専用ではなく<strong>データ通信対応の OTG ケーブル</strong>を使用してください。<br />
-      初回書き込み時はフラッシュ全体が消去されます（保存済みの設定はリセットされます）。
+      <div class="card">
+        <h2>書き込み後の使い方</h2>
+        <ol>
+          <li>「インストール完了」後に表示される<strong>空のダイアログは閉じて OK</strong> です
+            （仕様です。デバイスはすでに起動しています）</li>
+          <li><strong>LED が点灯</strong>し、初期モード（Pomodoro）のアイコンが表示されます</li>
+          <li>スマホ / PC の Bluetooth から <code>LED BOX ****</code>（末尾 4 文字は個体ごとに異なる）に接続。
+            ペアリングのパスキーは <code>123456</code></li>
+          <li>本体の 2 つのボタンで操作：
+            <ul>
+              <li><strong>白を長押し</strong>：モード切替（Pet → Pomodoro → Tools → Notification → SmartHome → Monitor → …）</li>
+              <li><strong>赤 / 白を短押し</strong>：各モードでの操作</li>
+            </ul>
+          </li>
+          <li>明るさ・モードは <strong>BLE 経由</strong>でも変更できます</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h2>デバイス情報</h2>
+        <ul class="specs">
+          <li><span class="k">MCU</span><span class="v">ESP32-C3</span></li>
+          <li><span class="k">BLE デバイス名</span><span class="v">LED BOX ****</span></li>
+          <li><span class="k">BLE パスキー</span><span class="v">123456</span></li>
+          <li><span class="k">LED</span><span class="v">8x8 マトリクス (MAX7219)</span></li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <strong>対応環境：</strong> デスクトップの Chrome / Edge / Opera（Web Serial）で書き込めます。<span class="mobile-only">さらに <strong>Android の Chrome（USB-OTG / WebUSB）</strong>にも対応。</span>
+        iOS（iPhone / iPad）と Safari・Firefox は非対応です。<br />
+        <span class="mobile-only">Android では充電専用ではなく<strong>データ通信対応の OTG ケーブル</strong>を使用してください。<br /></span>
+        初回書き込み時はフラッシュ全体が消去されます（保存済みの設定はリセットされます）。
+      </div>
     </div>
 
     <footer>
       Powered by
-      <a href="https://github.com/Jason2866/esp-web-tools" target="_blank" rel="noopener">ESP Web Tools (WebUSB対応版)</a>
+      <a id="engine-link" href="https://github.com/esphome/esp-web-tools" target="_blank" rel="noopener">ESP Web Tools</a>
       (Apache-2.0) ·
       <a href="https://github.com/Cespresso/LED-BOX" target="_blank" rel="noopener">ソースコード</a>
     </footer>
   </main>
+
+  <!-- 選択されたエンジンを動的ロードし、フッターのクレジットを切り替える -->
+  <script>
+    (function () {
+      var v = document.documentElement.dataset.v;
+      var ENGINES = {
+        pc: "https://unpkg.com/esp-web-tools@10/dist/web/install-button.js",
+        mobile:
+          "https://unpkg.com/tasmota-esp-web-tools@12.2.4/dist/web/install-button.js?module",
+      };
+      if (v === "pc" || v === "mobile") {
+        var s = document.createElement("script");
+        s.type = "module";
+        s.src = ENGINES[v];
+        document.head.appendChild(s);
+      }
+      var link = document.getElementById("engine-link");
+      if (link && v === "mobile") {
+        link.textContent = "ESP Web Tools（WebUSB対応版）";
+        link.href = "https://github.com/Jason2866/esp-web-tools";
+      } else if (link) {
+        link.textContent = "ESP Web Tools（公式）";
+        link.href = "https://github.com/esphome/esp-web-tools";
+      }
+    })();
+  </script>
 </body>
 </html>
